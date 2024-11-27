@@ -1,4 +1,5 @@
 # Copyright 2023 Clearpath Robotics, Inc.
+# Copyright 2024 Aaron Chan & Jon Cruz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +14,8 @@
 # limitations under the License.
 #
 # @author Roni Kreinin (rkreinin@clearpathrobotics.com)
+
+# Modified launch parameters to integrate with project
 
 from ament_index_python.packages import get_package_share_directory
 
