@@ -36,11 +36,14 @@ class TurtleBotNavEnv(gym.Env):
         self.done = False
         self.collision = False
 
-    def scan_callback(self, msg):
-        pass
+    def scan_callback(self, msg): # Scan is the LiDAR data
+        self.state = np.array(msg.ranges)
 
-    def odom_callback(self, msg):
-        pass
+    def odom_callback(self, msg): # Odometry is the position of the robot
+        self.current_position = np.array([
+            msg.pose.pose.position.x,
+            msg.pose.pose.position.y
+        ])
 
     def reset(self):
         self.done = False
@@ -50,21 +53,40 @@ class TurtleBotNavEnv(gym.Env):
         return self._get_state()
     
     def step(self, action):
-        pass
+        self._take_action(action)
+        rclpy.spin_once(self.node)
+        
+        return self._get_state(), self._calculate_reward(), self._is_done(), {}
 
     def _take_action(self, action):
-        pass
+        # Action -> Robot Control
+        msg = Twist()
+        if action == 0:  # Forward
+            msg.linear.x = 0.5
+        elif action == 1:  # Left
+            msg.angular.z = 0.5
+        elif action == 2:  # Right
+            msg.angular.z = -0.5
+        elif action == 3:  # Backwards
+            msg.linear.x = -0.5
+            
+        self.cmd_vel_pub.publish(msg)
 
     def _send_stop_command(self):
-        pass
+        msg = Twist()
+        self.cmd_vel_pub.publish(msg)
     
     def _get_state(self):
-        if self.state is None:
-            return np.zeros(self.observation_space.shape)
-        return self.state
+        return self.state if self.state is not None else np.zeros(self.observation_space
 
     def _calculate_reward(self):
-        pass
+        distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+        reward = self.last_distance_to_goal - distance_to_goal
+        if self._is_collision():
+            reward -= 10
+        self.last_distance_to_goal = distance_to_goal
+
+        return reward
 
     def _is_done(self):
         if self._is_collision():
@@ -74,9 +96,13 @@ class TurtleBotNavEnv(gym.Env):
         return self.done
 
     def _is_collision(self):
-        pass
-    
+        collision_threshold = 0.2 # TODO: Tune
+        self.collision = self.state is not None and np.min(self.state) < collision_threshold
+
+        return self.collision
+
     def close(self):
         self._send_stop_command()
         self.node.destroy_node()
         rclpy.shutdown()
+        
