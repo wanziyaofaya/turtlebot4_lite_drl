@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 package_name = 'turtlebot4_rl'
 
 setup(
-    name=package_name,
+    name=turtlebot4_rl,
     version='0.0.0',
     packages=find_packages(exclude=['test']),
     data_files=[
@@ -15,7 +15,7 @@ setup(
     zip_safe=True,
     maintainer='aaron',
     maintainer_email='aarchan108@gmail.com',
-    description='TODO: Package description',
+    description='Reinforcement learning for Turtlebot4 navigation',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
