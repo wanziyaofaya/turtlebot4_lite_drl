@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 package_name = 'turtlebot4_rl'
 
 setup(
-    name=turtlebot4_rl,
+    name=package_name,
     version='0.0.0',
     packages=find_packages(exclude=['test']),
     data_files=[
