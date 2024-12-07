@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import warnings
+warnings.filterwarnings("ignore")
 
 package_name = 'turtlebot4_rl'
 
