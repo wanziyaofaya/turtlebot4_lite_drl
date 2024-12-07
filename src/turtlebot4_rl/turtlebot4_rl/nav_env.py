@@ -77,7 +77,7 @@ class TurtleBotNavEnv(gym.Env):
         self.cmd_vel_pub.publish(msg)
     
     def _get_state(self):
-        return self.state if self.state is not None else np.zeros(self.observation_space
+        return self.state if self.state is not None else np.zeros(self.observation_space)
 
     def _calculate_reward(self):
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
