@@ -7,11 +7,10 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self):
+    def __init__(self, start_position, goal_position):
         super(TurtleBotNavEnv, self).__init__()
         
         # Init ros2 node
-        rclpy.init()
         self.node = rclpy.create_node('turtlebot_nav_env')
         
         # Define action and observation spaces
@@ -30,8 +29,8 @@ class TurtleBotNavEnv(gym.Env):
         
         # State
         self.state = None
-        self.goal_position = np.array([5.0, 5.0]) # TODO set goal position based on gazebo world
-        self.current_position = np.array([0.0, 0.0]) # TODO set initial position based on gazebo world
+        self.current_position = np.array(start_position)
+        self.goal_position = np.array(goal_position)
         self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         self.done = False
         self.collision = False
