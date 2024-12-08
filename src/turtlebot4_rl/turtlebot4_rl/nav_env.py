@@ -5,11 +5,15 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
+from std_srvs.srv import Trigger
+
+from gazebo_msgs.srv import SetModelState
+from gazebo_msgs.msg import ModelState
+from geometry_msgs.msg import Pose, Twist, Quaternion
 import time
+import math
 
 class TurtleBotNavEnv(gym.Env):
-    metadata = {"render_modes": []}
-
     def __init__(self, start_position, goal_position, max_wait_for_observation=5.0):
         super().__init__()
 
@@ -17,7 +21,7 @@ class TurtleBotNavEnv(gym.Env):
             rclpy.init(args=None)
 
         self.node = rclpy.create_node('turtlebot_nav_env')
-        
+
         # Define action and observation spaces
         # 4 Discrete Actions (forward, backwards, left, right)
         self.action_space = gym.spaces.Discrete(4)
@@ -42,6 +46,8 @@ class TurtleBotNavEnv(gym.Env):
         self.collision = False
         self.max_wait_for_observation = max_wait_for_observation
 
+        print("TurtleBotNavEnv initialized.")
+
     def scan_callback(self, msg):
         """Updates state with current scan data."""
         self.state = np.array(msg.ranges, dtype=np.float32)
@@ -52,6 +58,7 @@ class TurtleBotNavEnv(gym.Env):
             msg.pose.pose.position.x,
             msg.pose.pose.position.y
         ], dtype=np.float32)
+        print(f"Current Position: {self.current_position}")
 
     def seed(self, seed=None):
         """Set the random seed for reproducibility."""
@@ -102,13 +109,13 @@ class TurtleBotNavEnv(gym.Env):
         """Convert the discrete action into a velocity command."""
         msg = Twist()
         if action == 0:  # Forward
-            msg.linear.x = 0.5
+            msg.linear.x = 10.0
         elif action == 1:  # Left
             msg.angular.z = 0.5
         elif action == 2:  # Right
             msg.angular.z = -0.5
         elif action == 3:  # Backwards
-            msg.linear.x = -0.5
+            msg.linear.x = -10.0
 
         self.cmd_vel_pub.publish(msg)
 
@@ -173,8 +180,56 @@ class TurtleBotNavEnv(gym.Env):
         return self.state is not initial_state
 
     def _reset_robot_position(self):
-        """Reset the robot to the starting position."""
-        pass
+        return
+        """
+        Use Gazebo's /gazebo/set_model_state service to reset the robot position and orientation.
+        """
+        set_model_state_client = self.node.create_client(SetModelState, '/gazebo/set_model_state')
+
+        if not set_model_state_client.wait_for_service(timeout_sec=5.0):
+            raise RuntimeError("Service /gazebo/set_model_state not available")
+
+        # Prepare request
+        request = SetModelState.Request()
+        model_state = ModelState()
+
+        # Replace <your_model_name> with the correct Gazebo model name of your TurtleBot
+        model_state.model_name = "turtlebot4"
+
+        # Pos
+        model_state.pose.position.x = float(self.start_position[0])
+        model_state.pose.position.y = float(self.start_position[1])
+        model_state.pose.position.z = 0.0
+
+        # Orientation
+        yaw = 0.0
+        q = Quaternion()
+        q.x = 0.0
+        q.y = 0.0
+        q.z = math.sin(yaw/2.0)
+        q.w = math.cos(yaw/2.0)
+        model_state.pose.orientation = q
+
+        # Reset velocities
+        model_state.twist.linear.x = 0.0
+        model_state.twist.linear.y = 0.0
+        model_state.twist.linear.z = 0.0
+        model_state.twist.angular.x = 0.0
+        model_state.twist.angular.y = 0.0
+        model_state.twist.angular.z = 0.0
+
+        request.state = model_state
+
+        # Call service
+        future = set_model_state_client.call_async(request)
+        rclpy.spin_until_future_complete(self.node, future)
+
+        # Check result
+        if future.result() is None:
+            raise RuntimeError("Failed to call /gazebo/set_model_state service.")
+
+        if not future.result().success:
+            raise RuntimeError(f"Failed to set model state: {future.result().status_message}")
 
     def close(self):
         self._send_stop_command()
