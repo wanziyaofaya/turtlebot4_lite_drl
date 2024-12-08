@@ -24,7 +24,7 @@ class TurtleBotNavEnv(gym.Env):
 
         # Continuous observation (LiDAR scans)
         self.observation_space = gym.spaces.Box(
-            low=0.0, high=10.0, shape=(360,), dtype=np.float32
+            low=0.0, high=10.0, shape=(640,), dtype=np.float32
         )
         
         # Pub/Sub
@@ -93,8 +93,10 @@ class TurtleBotNavEnv(gym.Env):
         reward = self._calculate_reward()
         done = self._is_done()
         info = {}
+        terminated = self._is_done()
+        truncated = False
 
-        return self._get_state(), reward, done, info
+        return self._get_state(), reward, terminated, truncated, info
 
     def _take_action(self, action):
         """Convert the discrete action into a velocity command."""
