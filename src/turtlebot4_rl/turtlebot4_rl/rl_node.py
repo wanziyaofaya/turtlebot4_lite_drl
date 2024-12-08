@@ -47,12 +47,13 @@ class TurtleBotRLNode(Node):
     def evaluate(self, episodes=5):
         self.get_logger().info(f"Evaluating {self.algorithm} for {episodes} episodes.")
         for episode in range(episodes):
-            obs = self.env.reset()
+            obs, _ = self.env.reset()
             done = False
             total_reward = 0
             while not done:
                 action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, done, info = self.env.step(action)
+                obs, reward, done, truncated, info = self.env.step(action)
+                done = done or truncated
                 total_reward += reward
             self.get_logger().info(f"Episode {episode + 1}: Total Reward: {total_reward}")
 
