@@ -11,7 +11,7 @@ from gazebo_msgs.srv import SetModelState
 from gazebo_msgs.msg import ModelState
 from geometry_msgs.msg import Pose, Twist, Quaternion
 from gz.transport14 import Node
-from gz.msgs11.pose_pb2 import Pose as IgnPose
+from gz.msgs11.pose_pb2 import Pose
 import time
 import math
 
@@ -48,8 +48,7 @@ class TurtleBotNavEnv(gym.Env):
         self.collision = False
         self.max_wait_for_observation = max_wait_for_observation
 
-        # TODO: Crashes
-#         self._reset_robot_position()
+        self._reset_robot_position()
 
         print("TurtleBotNavEnv initialized.")
 
@@ -195,7 +194,7 @@ class TurtleBotNavEnv(gym.Env):
         Reset the robot's position
         """
         node = Node()
-        pose_msg = IgnPose()
+        pose_msg = Pose()
         pose_msg.name = "turtlebot4"
 
         pose_msg.position.x = float(self.start_position[0])
@@ -214,7 +213,7 @@ class TurtleBotNavEnv(gym.Env):
         result, response = node.request(service_name, pose_msg, Pose, Pose, timeout_ms)
 
         if not result:
-            raise RuntimeError(f"Failed to reset the robot position.")
+            raise RuntimeError("Failed to reset the robot position.")
 
         time.sleep(0.1)
 
