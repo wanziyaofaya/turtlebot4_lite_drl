@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from turtlebot4_rl.turtlebot_nav_env import TurtleBotNavEnv
+from turtlebot4_rl.nav_env import TurtleBotNavEnv
 from stable_baselines3 import PPO, DQN, SAC
 import gymnasium as gym
 import numpy as np
