@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Trigger
@@ -32,7 +32,7 @@ class TurtleBotNavEnv(gym.Env):
         )
         
         # Pub/Sub
-        self.cmd_vel_pub = self.node.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_vel_pub = self.node.create_publisher(TwistStamped, '/cmd_vel', 10)
         self.scan_sub = self.node.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.odom_sub = self.node.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         
@@ -107,21 +107,26 @@ class TurtleBotNavEnv(gym.Env):
 
     def _take_action(self, action):
         """Convert the discrete action into a velocity command."""
-        msg = Twist()
+        msg = TwistStamped()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
+
         if action == 0:  # Forward
-            msg.linear.x = 10.0
+            msg.twist.linear.x = 10.0
         elif action == 1:  # Left
-            msg.angular.z = 0.5
+            msg.twist.angular.z = 0.5
         elif action == 2:  # Right
-            msg.angular.z = -0.5
+            msg.twist.angular.z = -0.5
         elif action == 3:  # Backwards
-            msg.linear.x = -10.0
+            msg.twist.linear.x = -10.0
 
         self.cmd_vel_pub.publish(msg)
 
     def _send_stop_command(self):
         """Send zero velocity to the robot."""
-        msg = Twist()
+        msg = TwistStamped()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
         self.cmd_vel_pub.publish(msg)
 
     def _get_state(self):
