@@ -10,6 +10,8 @@ from std_srvs.srv import Trigger
 from gazebo_msgs.srv import SetModelState
 from gazebo_msgs.msg import ModelState
 from geometry_msgs.msg import Pose, Twist, Quaternion
+from gz.transport14 import Node
+from gz.msgs11.pose_pb2 import Pose as IgnPose
 import time
 import math
 
@@ -45,6 +47,9 @@ class TurtleBotNavEnv(gym.Env):
         self.done = False
         self.collision = False
         self.max_wait_for_observation = max_wait_for_observation
+
+        # TODO: Crashes
+#         self._reset_robot_position()
 
         print("TurtleBotNavEnv initialized.")
 
@@ -186,56 +191,32 @@ class TurtleBotNavEnv(gym.Env):
         return self.state is not initial_state
 
     def _reset_robot_position(self):
-        return
         """
-        Use Gazebo's /gazebo/set_model_state service to reset the robot position and orientation.
+        Reset the robot's position
         """
-        set_model_state_client = self.node.create_client(SetModelState, '/gazebo/set_model_state')
+        node = Node()
+        pose_msg = IgnPose()
+        pose_msg.name = "turtlebot4"
 
-        if not set_model_state_client.wait_for_service(timeout_sec=5.0):
-            raise RuntimeError("Service /gazebo/set_model_state not available")
+        pose_msg.position.x = float(self.start_position[0])
+        pose_msg.position.y = float(self.start_position[1])
+        pose_msg.position.z = 0.0
 
-        # Prepare request
-        request = SetModelState.Request()
-        model_state = ModelState()
-
-        # Replace <your_model_name> with the correct Gazebo model name of your TurtleBot
-        model_state.model_name = "turtlebot4"
-
-        # Pos
-        model_state.pose.position.x = float(self.start_position[0])
-        model_state.pose.position.y = float(self.start_position[1])
-        model_state.pose.position.z = 0.0
-
-        # Orientation
         yaw = 0.0
-        q = Quaternion()
-        q.x = 0.0
-        q.y = 0.0
-        q.z = math.sin(yaw/2.0)
-        q.w = math.cos(yaw/2.0)
-        model_state.pose.orientation = q
+        pose_msg.orientation.w = math.cos(yaw / 2.0)
+        pose_msg.orientation.x = 0.0
+        pose_msg.orientation.y = 0.0
+        pose_msg.orientation.z = math.sin(yaw / 2.0)
 
-        # Reset velocities
-        model_state.twist.linear.x = 0.0
-        model_state.twist.linear.y = 0.0
-        model_state.twist.linear.z = 0.0
-        model_state.twist.angular.x = 0.0
-        model_state.twist.angular.y = 0.0
-        model_state.twist.angular.z = 0.0
+        service_name = "/world/maze/set_pose"
+        timeout_ms = 1000
 
-        request.state = model_state
+        result, response = node.request(service_name, pose_msg, Pose, Pose, timeout_ms)
 
-        # Call service
-        future = set_model_state_client.call_async(request)
-        rclpy.spin_until_future_complete(self.node, future)
+        if not result:
+            raise RuntimeError(f"Failed to reset the robot position.")
 
-        # Check result
-        if future.result() is None:
-            raise RuntimeError("Failed to call /gazebo/set_model_state service.")
-
-        if not future.result().success:
-            raise RuntimeError(f"Failed to set model state: {future.result().status_message}")
+        time.sleep(0.1)
 
     def close(self):
         self._send_stop_command()
