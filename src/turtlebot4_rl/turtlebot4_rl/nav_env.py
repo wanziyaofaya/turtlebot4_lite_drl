@@ -12,6 +12,7 @@ from gazebo_msgs.msg import ModelState
 from geometry_msgs.msg import Pose, Twist, Quaternion
 from gz.transport14 import Node
 from gz.msgs11.pose_pb2 import Pose
+from gz.msgs11.boolean_pb2 import Boolean
 import time
 import math
 
@@ -210,9 +211,9 @@ class TurtleBotNavEnv(gym.Env):
         service_name = "/world/maze/set_pose"
         timeout_ms = 1000
 
-        result, response = node.request(service_name, pose_msg, Pose, Pose, timeout_ms)
+        result, response = node.request(service_name, pose_msg, Pose, Boolean, timeout_ms)
 
-        if not result:
+        if not result or not response.data:
             raise RuntimeError("Failed to reset the robot position.")
 
         time.sleep(0.1)
