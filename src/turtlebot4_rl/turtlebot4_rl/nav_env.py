@@ -45,13 +45,17 @@ class TurtleBotNavEnv(gym.Env):
         self.goal_position = np.array(goal_position, dtype=np.float32)
         self.current_position = np.copy(self.start_position)
         self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+        self.best_distance_to_goal = np.linalg.norm(self.goal_position - self.start_position)
+        self.steps_since_improvement = 0
+        self.max_steps_without_improvement = 10000
+        self.distance_degradation_limit = 50
         self.done = False
         self.collision = False
         self.max_wait_for_observation = max_wait_for_observation
 
         self._reset_robot_position()
 
-        print("TurtleBotNavEnv initialized.")
+        self._print_and_log("TurtleBotNavEnv initialized.")
 
     def scan_callback(self, msg):
         """Updates state with current scan data."""
@@ -64,7 +68,7 @@ class TurtleBotNavEnv(gym.Env):
             msg.pose.pose.position.y
         ], dtype=np.float32)
 
-    def seed(self, seed=None):
+    def seed(self, seed=0):
         """Set the random seed for reproducibility."""
         super().seed(seed)
         np.random.seed(seed)
@@ -72,6 +76,9 @@ class TurtleBotNavEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         """Reset the environment."""
         super().reset(seed=seed)
+
+        self.steps_since_improvement = 0
+        self.best_distance_to_goal = np.linalg.norm(self.goal_position - self.start_position)
 
         self._send_stop_command()
         self.done = False
@@ -107,8 +114,7 @@ class TurtleBotNavEnv(gym.Env):
         terminated = self._is_done()
         truncated = False
 
-        print(f"{self.current_position} -> {self.goal_position} | Reward: {reward}")
-
+        self._print_and_log(f"{self.current_position} -> {self.goal_position} | Reward: {reward}")
 
         return self._get_state(), reward, terminated, truncated, info
 
@@ -121,9 +127,9 @@ class TurtleBotNavEnv(gym.Env):
         if action == 0:  # Forward
             msg.twist.linear.x = 10.0
         elif action == 1:  # Left
-            msg.twist.angular.z = 0.5
+            msg.twist.angular.z = 1
         elif action == 2:  # Right
-            msg.twist.angular.z = -0.5
+            msg.twist.angular.z = -1
         elif action == 3:  # Backwards
             msg.twist.linear.x = -10.0
 
@@ -150,12 +156,20 @@ class TurtleBotNavEnv(gym.Env):
         collisions yield a penalty.
         """
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        reward = self.last_distance_to_goal - distance_to_goal
+        improvement = self.last_distance_to_goal - distance_to_goal
+        reward = improvement
 
-        # Penalize collisions
+        if distance_to_goal < self.best_distance_to_goal:
+            self.best_distance_to_goal = distance_to_goal
+            self.steps_since_improvement = 0
+        else:
+            self.steps_since_improvement += 1
+
         if self._is_collision():
-            print("Collision!")
-            reward -= 10.0
+            reward -= 100.0
+
+        # step penalty to encourage efficient navigation
+        reward -= 0.001
 
         self.last_distance_to_goal = distance_to_goal
         return reward
@@ -166,10 +180,27 @@ class TurtleBotNavEnv(gym.Env):
         - The robot collides with an obstacle.
         - The robot reaches the goal within a certain threshold.
         """
-        if self._is_collision():
+
+        # End if goal reached
+        if np.linalg.norm(self.goal_position - self.current_position) < 0.5:
+            self._print_and_log("Goal reached!")
             self.done = True
-        elif np.linalg.norm(self.goal_position - self.current_position) < 0.5:
+            return True
+
+        # End if no improvement in a while
+        if self.steps_since_improvement > self.max_steps_without_improvement:
+            self._print_and_log("No improvement in a while.")
             self.done = True
+            return True
+
+        # End if robot moves away from the goal
+#         current_distance = np.linalg.norm(self.goal_position - self.current_position)
+#         if (current_distance - self.best_distance_to_goal) > self.distance_degradation_limit:
+#             self._print_and_log("Moving too far away from the goal.")
+#             # TODO: Should we penalize or just end episode immediately?
+#             self.done = True
+#             return True
+
         return self.done
 
     def _is_collision(self):
@@ -219,6 +250,9 @@ class TurtleBotNavEnv(gym.Env):
             raise RuntimeError("Failed to reset the robot position.")
 
         time.sleep(0.1)
+
+    def _print_and_log(self, message):
+        print(message)
 
     def close(self):
         self._send_stop_command()
