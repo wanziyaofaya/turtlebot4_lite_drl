@@ -147,6 +147,7 @@ class TurtleBotNavEnv(gym.Env):
 
         # Penalize collisions
         if self._is_collision():
+            print("Collision!")
             reward -= 10.0
 
         self.last_distance_to_goal = distance_to_goal
@@ -169,7 +170,7 @@ class TurtleBotNavEnv(gym.Env):
         Check for collision based on LiDAR minimum range.
         If any reading is below a threshold, consider it a collision.
         """
-        collision_threshold = 0.2  # TODO: Tune
+        collision_threshold = 0.25
         self.collision = (self.state is not None) and (np.min(self.state) < collision_threshold)
         return self.collision
 
