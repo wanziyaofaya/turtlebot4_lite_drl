@@ -63,7 +63,6 @@ class TurtleBotNavEnv(gym.Env):
             msg.pose.pose.position.x,
             msg.pose.pose.position.y
         ], dtype=np.float32)
-        print(f"Current Position: {self.current_position}")
 
     def seed(self, seed=None):
         """Set the random seed for reproducibility."""
@@ -107,6 +106,9 @@ class TurtleBotNavEnv(gym.Env):
         info = {}
         terminated = self._is_done()
         truncated = False
+
+        print(f"{self.current_position} -> {self.goal_position} | Reward: {reward}")
+
 
         return self._get_state(), reward, terminated, truncated, info
 

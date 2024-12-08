@@ -57,8 +57,17 @@ class TurtleBotRLNode(Node):
             self.get_logger().info(f"Episode {episode + 1}: Total Reward: {total_reward}")
 
 def main(args=None):
+    arg_parser = argparse.ArgumentParser()
+    arg_parser.add_argument('--start_x', type=float, default=0.0)
+    arg_parser.add_argument('--start_y', type=float, default=0.0)
+    arg_parser.add_argument('--goal_x', type=float, default=10.0)
+    arg_parser.add_argument('--goal_y', type=float, default=10.0)
+    arg_parser.add_argument('--algorithm', type=str, default='DQN')
+
+    parsed = arg_parser.parse_args(args=args)
+
     rclpy.init(args=args)
-    node = TurtleBotRLNode()
+    node = TurtleBotRLNode(parsed.start_x, parsed.start_y, parsed.goal_x, parsed.goal_y, parsed.algorithm)
     node.train()
     node.evaluate()
     rclpy.spin(node)
