@@ -2,14 +2,21 @@ import gymnasium as gym
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
+from std_srvs.srv import Trigger
+
+from gazebo_msgs.srv import SetModelState
+from gazebo_msgs.msg import ModelState
+from geometry_msgs.msg import Pose, Twist, Quaternion
+from gz.transport14 import Node
+from gz.msgs11.pose_pb2 import Pose
+from gz.msgs11.boolean_pb2 import Boolean
 import time
+import math
 
 class TurtleBotNavEnv(gym.Env):
-    metadata = {"render_modes": []}
-
     def __init__(self, start_position, goal_position, max_wait_for_observation=5.0):
         super().__init__()
 
@@ -17,7 +24,7 @@ class TurtleBotNavEnv(gym.Env):
             rclpy.init(args=None)
 
         self.node = rclpy.create_node('turtlebot_nav_env')
-        
+
         # Define action and observation spaces
         # 4 Discrete Actions (forward, backwards, left, right)
         self.action_space = gym.spaces.Discrete(4)
@@ -28,7 +35,7 @@ class TurtleBotNavEnv(gym.Env):
         )
         
         # Pub/Sub
-        self.cmd_vel_pub = self.node.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_vel_pub = self.node.create_publisher(TwistStamped, '/cmd_vel', 10)
         self.scan_sub = self.node.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.odom_sub = self.node.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         
@@ -38,9 +45,19 @@ class TurtleBotNavEnv(gym.Env):
         self.goal_position = np.array(goal_position, dtype=np.float32)
         self.current_position = np.copy(self.start_position)
         self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+        self.best_distance_to_goal = np.linalg.norm(self.goal_position - self.start_position)
+        self.steps_since_improvement = 0
+        self.steps_of_improvement = 0
+        self.max_steps_without_improvement = 10000
+        self.distance_degradation_limit = 50
         self.done = False
         self.collision = False
         self.max_wait_for_observation = max_wait_for_observation
+        self.collision_count = 0
+
+        self._reset_robot_position()
+
+        self._print_and_log("TurtleBotNavEnv initialized.")
 
     def scan_callback(self, msg):
         """Updates state with current scan data."""
@@ -53,7 +70,7 @@ class TurtleBotNavEnv(gym.Env):
             msg.pose.pose.position.y
         ], dtype=np.float32)
 
-    def seed(self, seed=None):
+    def seed(self, seed=0):
         """Set the random seed for reproducibility."""
         super().seed(seed)
         np.random.seed(seed)
@@ -62,9 +79,14 @@ class TurtleBotNavEnv(gym.Env):
         """Reset the environment."""
         super().reset(seed=seed)
 
+        self.steps_since_improvement = 0
+        self.steps_of_improvement = 0
+        self.best_distance_to_goal = np.linalg.norm(self.goal_position - self.start_position)
+
         self._send_stop_command()
         self.done = False
         self.collision = False
+        self.collision_count = 0
 
         # Reset position in Gazebo
         self._reset_robot_position()
@@ -96,25 +118,33 @@ class TurtleBotNavEnv(gym.Env):
         terminated = self._is_done()
         truncated = False
 
+        self._print_and_log(f"{self.current_position} -> {self.goal_position} | Reward: {reward}")
+
+
         return self._get_state(), reward, terminated, truncated, info
 
     def _take_action(self, action):
         """Convert the discrete action into a velocity command."""
-        msg = Twist()
+        msg = TwistStamped()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
+
         if action == 0:  # Forward
-            msg.linear.x = 0.5
+            msg.twist.linear.x = 10.0
         elif action == 1:  # Left
-            msg.angular.z = 0.5
+            msg.twist.angular.z = 1.0
         elif action == 2:  # Right
-            msg.angular.z = -0.5
+            msg.twist.angular.z = -1.0
         elif action == 3:  # Backwards
-            msg.linear.x = -0.5
+            msg.twist.linear.x = -10.0
 
         self.cmd_vel_pub.publish(msg)
 
     def _send_stop_command(self):
         """Send zero velocity to the robot."""
-        msg = Twist()
+        msg = TwistStamped()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
         self.cmd_vel_pub.publish(msg)
 
     def _get_state(self):
@@ -131,11 +161,24 @@ class TurtleBotNavEnv(gym.Env):
         collisions yield a penalty.
         """
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        reward = self.last_distance_to_goal - distance_to_goal
+        improvement = self.last_distance_to_goal - distance_to_goal
+        reward = improvement
+        # TODO: Unknown if we need steps of improvement
+#         reward = improvement * self.steps_of_improvement
 
-        # Penalize collisions
+        if distance_to_goal < self.best_distance_to_goal:
+            self.best_distance_to_goal = distance_to_goal
+            self.steps_since_improvement = 0
+            self.steps_of_improvement += 1
+        else:
+            self.steps_since_improvement += 1
+            self.steps_of_improvement = 0
+
         if self._is_collision():
-            reward -= 10.0
+            reward -= 1000.0
+
+        # step penalty to encourage efficient navigation
+        reward -= 0.001
 
         self.last_distance_to_goal = distance_to_goal
         return reward
@@ -146,10 +189,32 @@ class TurtleBotNavEnv(gym.Env):
         - The robot collides with an obstacle.
         - The robot reaches the goal within a certain threshold.
         """
-        if self._is_collision():
+
+        # End if goal reached
+        if np.linalg.norm(self.goal_position - self.current_position) < 0.5:
+            self._print_and_log("Goal reached!")
             self.done = True
-        elif np.linalg.norm(self.goal_position - self.current_position) < 0.5:
+            return True
+
+        # End if no improvement in a while
+        if self.steps_since_improvement > self.max_steps_without_improvement:
+            self._print_and_log("No improvement in a while.")
             self.done = True
+            return True
+
+        if self.collision_count > 10:
+            self._print_and_log("Too many collisions.")
+            self.done = True
+            return True
+
+        # End if robot moves away from the goal
+#         current_distance = np.linalg.norm(self.goal_position - self.current_position)
+#         if (current_distance - self.best_distance_to_goal) > self.distance_degradation_limit:
+#             self._print_and_log("Moving too far away from the goal.")
+#             # TODO: Should we penalize or just end episode immediately?
+#             self.done = True
+#             return True
+
         return self.done
 
     def _is_collision(self):
@@ -157,8 +222,15 @@ class TurtleBotNavEnv(gym.Env):
         Check for collision based on LiDAR minimum range.
         If any reading is below a threshold, consider it a collision.
         """
-        collision_threshold = 0.2  # TODO: Tune
-        self.collision = (self.state is not None) and (np.min(self.state) < collision_threshold)
+        collision_threshold = 0.25
+
+        collision = (self.state is not None) and (np.min(self.state) < collision_threshold)
+        if self.collision != True and collision == True: # Only increment if not already in collision
+            self.collision_count += 1
+            self._print_and_log(f"Collision!")
+
+        self.collision = collision
+
         return self.collision
 
     def _wait_for_new_state(self):
@@ -173,8 +245,36 @@ class TurtleBotNavEnv(gym.Env):
         return self.state is not initial_state
 
     def _reset_robot_position(self):
-        """Reset the robot to the starting position."""
-        pass
+        """
+        Reset the robot's position
+        """
+        node = Node()
+        pose_msg = Pose()
+        pose_msg.name = "turtlebot4"
+
+        pose_msg.position.x = float(self.start_position[0])
+        pose_msg.position.y = float(self.start_position[1])
+        pose_msg.position.z = 0.0
+
+        yaw = 0.0
+        pose_msg.orientation.w = math.cos(yaw / 2.0)
+        pose_msg.orientation.x = 0.0
+        pose_msg.orientation.y = 0.0
+        pose_msg.orientation.z = math.sin(yaw / 2.0)
+
+        service_name = "/world/maze/set_pose"
+        timeout_ms = 1000
+
+        result, response = node.request(service_name, pose_msg, Pose, Boolean, timeout_ms)
+
+        if not result or not response.data:
+            raise RuntimeError("Failed to reset the robot position.")
+
+        time.sleep(0.1)
+
+    def _print_and_log(self, message):
+        print(message)
+        self.node.get_logger().info(message)
 
     def close(self):
         self._send_stop_command()
