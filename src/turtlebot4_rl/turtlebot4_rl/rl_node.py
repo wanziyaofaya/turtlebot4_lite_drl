@@ -38,7 +38,7 @@ class TurtleBotRLNode(Node):
             raise ValueError(f"Unsupported algorithm: {algorithm_name}")
         return algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1)
 
-    def train(self, timesteps=10000):
+    def train(self, timesteps=1000):
         self.get_logger().info(f"Training {self.algorithm} for {timesteps} timesteps.")
         self.model.learn(total_timesteps=timesteps)
         self.model.save(f"{self.algorithm}_turtlebot_model")

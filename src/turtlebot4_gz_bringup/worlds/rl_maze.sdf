@@ -251,6 +251,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box'>
+      <static>true</static>
       <pose>-0.54182841829151007 2.4843379588245527 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -298,6 +299,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_0'>
+      <static>true</static>
       <pose>-4.4658708441967372 4.4940785161171686 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -345,6 +347,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_1'>
+      <static>true</static>
       <pose>-3.4833477158619064 -0.50489987961622029 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -392,6 +395,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_2'>
+      <static>true</static>
       <pose>-6.5101561736371032 2.5087672771673208 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -439,6 +443,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_3'>
+      <static>true</static>
       <pose>-8.4997181595917404 0.47247749954588636 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -486,6 +491,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_4'>
+      <static>true</static>
       <pose>-6.488043894509687 -4.4880006797179615 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -533,6 +539,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_5'>
+      <static>true</static>
       <pose>-2.4460336539434699 -4.5025240479080564 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -580,6 +587,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_6'>
+      <static>true</static>
       <pose>-6.4555978828922473 -1.5219204614274702 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -627,6 +635,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='capsule'>
+      <static>true</static>
       <pose>-1.4916519770848642 -1.5197144234491371 0.5 0 0 0</pose>
       <link name='capsule_link'>
         <inertial>
@@ -676,6 +685,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='capsule_0'>
+      <static>true</static>
       <pose>-3.4762836350512702 2.4746489200877768 0.5 0 0 0</pose>
       <link name='capsule_link'>
         <inertial>
@@ -725,6 +735,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='capsule_1'>
+      <static>true</static>
       <pose>-8.426124322941547 3.4883105932109406 0.5 0 0 0</pose>
       <link name='capsule_link'>
         <inertial>
@@ -774,6 +785,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_7'>
+      <static>true</static>
       <pose>-1.5382522697068355 2.4869971765134284 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -821,6 +833,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_8'>
+      <static>true</static>
       <pose>-3.486061639816243 0.50341417273942934 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -868,6 +881,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_9'>
+      <static>true</static>
       <pose>-3.4913263124236282 -1.5129200309120436 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -915,6 +929,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_10'>
+      <static>true</static>
       <pose>-4.4548540115356445 3.4916501045227051 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -962,6 +977,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_11'>
+      <static>true</static>
       <pose>-4.4917688785630361 -0.52109418571552801 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -1009,6 +1025,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_12'>
+      <static>true</static>
       <pose>-7.4962139076998717 0.48222802762552663 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -1056,6 +1073,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_13'>
+      <static>true</static>
       <pose>-8.516860561904517 -0.52873783257579454 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -1103,6 +1121,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_14'>
+      <static>true</static>
       <pose>-8.4917276192972277 -1.5263066190670693 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -1150,6 +1169,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='capsule_2'>
+      <static>true</static>
       <pose>-8.515505658891648 -3.4933256151269956 0.5 0 0 0</pose>
       <link name='capsule_link'>
         <inertial>
@@ -1199,6 +1219,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_15'>
+      <static>true</static>
       <pose>-5.4467844939551577 -2.5539505425280473 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -1246,6 +1267,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_16'>
+      <static>true</static>
       <pose>-1.4969355082928826 -0.48732656685572828 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>
@@ -1293,6 +1315,7 @@
       <self_collide>false</self_collide>
     </model>
     <model name='box_17'>
+      <static>true</static>
       <pose>-0.51935038650353582 -2.5400750346171996 0.5 0 0 0</pose>
       <link name='box_link'>
         <inertial>

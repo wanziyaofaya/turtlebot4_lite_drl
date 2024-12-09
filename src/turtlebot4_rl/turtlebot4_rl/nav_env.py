@@ -128,13 +128,13 @@ class TurtleBotNavEnv(gym.Env):
         msg.header.frame_id = "base_link"
 
         if action == 0:  # Forward
-            msg.twist.linear.x = 10.0
+            msg.twist.linear.x = 5.0
         elif action == 1:  # Left
-            msg.twist.angular.z = 1.0
+            msg.twist.angular.z = 2.5
         elif action == 2:  # Right
-            msg.twist.angular.z = -1.0
+            msg.twist.angular.z = -2.5
         elif action == 3:  # Backwards
-            msg.twist.linear.x = -10.0
+            msg.twist.linear.x = -5.0
 
         self.cmd_vel_pub.publish(msg)
 
@@ -159,10 +159,14 @@ class TurtleBotNavEnv(gym.Env):
         collisions yield a penalty.
         """
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        improvement = self.last_distance_to_goal - distance_to_goal
+        improvement = (self.last_distance_to_goal - distance_to_goal) + 5
         reward = improvement
         # TODO: Unknown if we need steps of improvement
 #         reward = improvement * self.steps_of_improvement
+
+        # TODO: add reward for facing away wall (in terms of front angle)
+        # TODO: consider translational velocity and angular velocity
+        # TODO: wba obstacles?
 
         if distance_to_goal < self.best_distance_to_goal:
             self.best_distance_to_goal = distance_to_goal
@@ -173,7 +177,7 @@ class TurtleBotNavEnv(gym.Env):
             self.steps_of_improvement = 0
 
         if self._is_collision():
-            reward -= 1000.0
+            reward -= 100.0
 
         # step penalty to encourage efficient navigation
         reward -= 0.001
@@ -220,7 +224,7 @@ class TurtleBotNavEnv(gym.Env):
         Check for collision based on LiDAR minimum range.
         If any reading is below a threshold, consider it a collision.
         """
-        collision_threshold = 0.25
+        collision_threshold = 0.5
 
         collision = (self.state is not None) and (np.min(self.state) < collision_threshold)
         if self.collision != True and collision == True: # Only increment if not already in collision
