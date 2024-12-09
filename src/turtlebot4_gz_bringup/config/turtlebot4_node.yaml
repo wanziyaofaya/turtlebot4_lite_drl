@@ -1,4 +1,18 @@
 /**:
+  motion_control:
+    ros__parameters:
+      reflexes:
+        REFLEX_BUMP: False
+        REFLEX_CLIFF: False
+        REFLEX_DOCK_AVOID: False
+        REFLEX_GYRO_CAL: False
+        REFLEX_PANIC: False
+        REFLEX_PROXIMITY_SLOWDOWN: False
+        REFLEX_STUCK: False
+        REFLEX_VIRTUAL_WALL: False
+        REFLEX_WHEEL_DROP: False
+      safety_override: "full"
+      reflexes_enabled: False
   turtlebot4_node:
     ros__parameters:
       wifi:

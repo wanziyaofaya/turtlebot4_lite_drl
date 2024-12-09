@@ -31,14 +31,18 @@ ARGUMENTS = [
                           description='Robot namespace'),
     DeclareLaunchArgument('rviz', default_value='false',
                           choices=['true', 'false'], description='Start rviz.'),
-    DeclareLaunchArgument('world', default_value='warehouse',
+    DeclareLaunchArgument('world', default_value='rl_maze',
                           description='Simulation World'),
     DeclareLaunchArgument('model', default_value='standard',
                           choices=['standard', 'lite'],
                           description='Turtlebot4 Model'),
 ]
 
-for pose_element in ['x', 'y', 'z', 'yaw']:
+for pose_element in ['x', 'y']:
+    ARGUMENTS.append(DeclareLaunchArgument(pose_element, default_value='5.0',
+                     description=f'{pose_element} component of the robot pose.'))
+
+for pose_element in ['z', 'yaw']:
     ARGUMENTS.append(DeclareLaunchArgument(pose_element, default_value='0.0',
                      description=f'{pose_element} component of the robot pose.'))
 

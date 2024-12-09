@@ -7,8 +7,6 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Trigger
 
-from gazebo_msgs.srv import SetModelState
-from gazebo_msgs.msg import ModelState
 from geometry_msgs.msg import Pose, Twist, Quaternion
 from gz.transport14 import Node
 from gz.msgs11.pose_pb2 import Pose
@@ -262,11 +260,11 @@ class TurtleBotNavEnv(gym.Env):
         pose_msg.orientation.y = 0.0
         pose_msg.orientation.z = math.sin(yaw / 2.0)
 
-        service_name = "/world/maze/set_pose"
+        service_name = "/world/rl_maze/set_pose"
         timeout_ms = 1000
 
         result, response = node.request(service_name, pose_msg, Pose, Boolean, timeout_ms)
-
+    
         if not result or not response.data:
             raise RuntimeError("Failed to reset the robot position.")
 

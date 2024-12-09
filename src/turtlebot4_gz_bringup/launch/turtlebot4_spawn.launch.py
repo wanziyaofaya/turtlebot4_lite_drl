@@ -154,18 +154,18 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # Spawn Dock
-        Node(
-            package='ros_gz_sim',
-            executable='create',
-            arguments=['-name', dock_name,
-                       '-x', x_dock,
-                       '-y', y_dock,
-                       '-z', z,
-                       '-Y', yaw_dock,
-                       '-topic', 'standard_dock_description'],
-            output='screen',
-        ),
+        # # Spawn Dock
+        # Node(
+        #     package='ros_gz_sim',
+        #     executable='create',
+        #     arguments=['-name', dock_name,
+        #                '-x', x_dock,
+        #                '-y', y_dock,
+        #                '-z', z,
+        #                '-Y', yaw_dock,
+        #                '-topic', 'standard_dock_description'],
+        #     output='screen',
+        # ),
 
         # ROS IGN bridge
         IncludeLaunchDescription(
