@@ -3,7 +3,6 @@ from rclpy.node import Node
 from turtlebot4_rl.nav_env import TurtleBotNavEnv
 from stable_baselines3 import PPO, DQN, SAC
 import numpy as np
-import argparse
 
 class TurtleBotRLNode(Node):
     def __init__(self, start_x=0.0, start_y=0.0, goal_x=10.0, goal_y=10.0, algorithm='DQN'):
@@ -47,28 +46,18 @@ class TurtleBotRLNode(Node):
     def evaluate(self, episodes=5):
         self.get_logger().info(f"Evaluating {self.algorithm} for {episodes} episodes.")
         for episode in range(episodes):
-            obs, _ = self.env.reset()
+            obs = self.env.reset()
             done = False
             total_reward = 0
             while not done:
                 action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, done, truncated, info = self.env.step(action)
-                done = done or truncated
+                obs, reward, done, info = self.env.step(action)
                 total_reward += reward
             self.get_logger().info(f"Episode {episode + 1}: Total Reward: {total_reward}")
 
 def main(args=None):
-    arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument('--start_x', type=float, default=0.0)
-    arg_parser.add_argument('--start_y', type=float, default=0.0)
-    arg_parser.add_argument('--goal_x', type=float, default=10.0)
-    arg_parser.add_argument('--goal_y', type=float, default=10.0)
-    arg_parser.add_argument('--algorithm', type=str, default='DQN')
-
-    parsed = arg_parser.parse_args(args=args)
-
     rclpy.init(args=args)
-    node = TurtleBotRLNode(parsed.start_x, parsed.start_y, parsed.goal_x, parsed.goal_y, parsed.algorithm)
+    node = TurtleBotRLNode()
     node.train()
     node.evaluate()
     rclpy.spin(node)
