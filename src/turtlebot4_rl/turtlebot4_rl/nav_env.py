@@ -77,7 +77,11 @@ class TurtleBotNavEnv(gym.Env):
         # Odometry offset variables
         self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
         self.odom_orientation_offset = 0.0
+        self.odom_prev_yaw = 0.0
         self.odom_calibrated = False
+
+        # Yaw Offset Variable
+        self.yaw_offset = 0.0  # Yaw offset to align with desired yaw
 
         self._reset_robot_position()
         self._print_and_log("TurtleBotNavEnv initialized.")
@@ -100,7 +104,7 @@ class TurtleBotNavEnv(gym.Env):
             odom_q.z,
             odom_q.w
         ])
-        odom_yaw = odom_euler[2]  # Yaw angle
+        odom_yaw = odom_euler[2]  # Yaw angle in radians
 
         if not self.odom_calibrated:
             # Calibrate odometry offsets
@@ -108,9 +112,17 @@ class TurtleBotNavEnv(gym.Env):
                 odom_x - self.start_position[0],
                 odom_y - self.start_position[1]
             ], dtype=np.float32)
-            self.odom_orientation_offset = odom_yaw  # Assuming start yaw is 0.0
+
+            # Set yaw offset based on desired yaw (facing downwards)
+            desired_yaw = -math.pi / 2  # Facing downwards (270 degrees)
+            self.yaw_offset = desired_yaw - odom_yaw
+
             self.odom_calibrated = True
-            self._print_and_log(f"Odometry calibrated. Position offset: {self.odom_position_offset}, Orientation offset: {self.odom_orientation_offset} radians.")
+            self._print_and_log(f"Odometry calibrated. Position offset: {self.odom_position_offset}, Orientation offset: {self.yaw_offset:.2f} radians.")
+
+            # Reset current position and yaw to start position and desired yaw (facing downwards)
+            self.current_position = np.copy(self.start_position)
+            self.current_yaw = desired_yaw
             return
 
         # Apply position offset
@@ -119,7 +131,7 @@ class TurtleBotNavEnv(gym.Env):
         self.current_position = np.array([adjusted_x, adjusted_y], dtype=np.float32)
 
         # Apply orientation offset
-        adjusted_yaw = odom_yaw - self.odom_orientation_offset
+        adjusted_yaw = odom_yaw + self.yaw_offset
         # Normalize yaw to [-pi, pi]
         adjusted_yaw = (adjusted_yaw + math.pi) % (2 * math.pi) - math.pi
         self.current_yaw = adjusted_yaw
@@ -173,7 +185,7 @@ class TurtleBotNavEnv(gym.Env):
         terminated = done
         truncated = False
 
-        self._print_and_log(f"{self.current_position} -> {self.goal_position} | Reward: {reward}")
+        self._print_and_log(f"Position: {self.current_position}, Yaw: {self.current_yaw:.2f} rad -> Goal: {self.goal_position} | Reward: {reward}")
 
         return self._get_state(), reward, terminated, truncated, info
 
@@ -334,7 +346,7 @@ class TurtleBotNavEnv(gym.Env):
         pose_msg.position.y = float(self.start_position[1])
         pose_msg.position.z = 0.0
 
-        yaw = 0.0
+        yaw = -math.pi / 2  # Desired yaw in radians (facing downwards)
         pose_msg.orientation.w = math.cos(yaw / 2.0)
         pose_msg.orientation.x = 0.0
         pose_msg.orientation.y = 0.0
@@ -357,8 +369,8 @@ class TurtleBotNavEnv(gym.Env):
     def _calibrate_odom(self):
         """Spinlock until odometry callback received to determine correct offsets to use."""
         self.odom_calibrated = False
-        self.odom_offset = np.array([0.0, 0.0], dtype=np.float32)
-        self.odom_orientation_offset = 0.0
+        self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
+        self.yaw_offset = 0.0
 
         self._print_and_log("Calibrating odometry offsets...")
 
