@@ -12,7 +12,7 @@ import csv
 from datetime import datetime
 
 class TurtleBotRLNode(Node):
-    def __init__(self, start_x=0.0, start_y=0.0, goal_x=10.0, goal_y=10.0, algorithm='DQN', timesteps=10000, episodes=10, positions_file=None):
+    def __init__(self, start_x=0.0, start_y=0.0, goal_x=10.0, goal_y=10.0, algorithm='DQN', timesteps=10000, episodes=10, positions_file=None, model_path=None):
         super().__init__('turtlebot_rl_node')
 
         self.declare_parameter('start_position', [start_x, start_y])
@@ -21,6 +21,7 @@ class TurtleBotRLNode(Node):
         self.declare_parameter('timesteps', timesteps)
         self.declare_parameter('episodes', episodes)
         self.declare_parameter('positions_file', positions_file if positions_file else "")
+        self.declare_parameter('model_path', model_path if model_path else "")
 
         self.start_position = np.array(self.get_parameter('start_position').value)
         self.goal_position = np.array(self.get_parameter('goal_position').value)
@@ -28,6 +29,7 @@ class TurtleBotRLNode(Node):
         self.timesteps = self.get_parameter('timesteps').value
         self.episodes = self.get_parameter('episodes').value
         self.positions_file = self.get_parameter('positions_file').value
+        self.model_path = self.get_parameter('model_path').value
 
         # Load position pairs for curriculum learning
         self.position_pairs = []
@@ -50,10 +52,10 @@ class TurtleBotRLNode(Node):
         initial_start, initial_goal = self.position_pairs[0]
         self.env = TurtleBotNavEnv(initial_start, initial_goal, self.algorithm == 'DQN')
 
-        self.model = self._load_algorithm(self.algorithm)
+        self.model = self._load_algorithm(self.algorithm, self.model_path)
 
         self.get_logger().info(
-            f"Start: {initial_start}, Goal: {initial_goal}, Algorithm: {self.algorithm}, Timesteps: {self.timesteps}, Episodes: {self.episodes}"
+            f"Start: {initial_start}, Goal: {initial_goal}, Algorithm: {self.algorithm}, Timesteps: {self.timesteps}, Episodes: {self.episodes}, Model Path: {self.model_path}"
         )
 
     def _load_positions(self, file_path):
@@ -75,8 +77,8 @@ class TurtleBotRLNode(Node):
             self.get_logger().error(f"Error reading positions file {file_path}: {e}")
         return position_pairs
 
-    def _load_algorithm(self, algorithm_name):
-        # Map algorithm names to RL models
+    def _load_algorithm(self, algorithm_name, model_path):
+        """Load or initialize the RL model based on the specified algorithm."""
         algorithms = {
             'PPO': PPO,
             'DQN': DQN,
@@ -85,7 +87,15 @@ class TurtleBotRLNode(Node):
         if algorithm_name not in algorithms:
             self.get_logger().error(f"Algorithm {algorithm_name} is not supported!")
             raise ValueError(f"Unsupported algorithm: {algorithm_name}")
-        return algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1)
+
+        if model_path and os.path.isfile(model_path):
+            self.get_logger().info(f"Loading pre-trained model from {model_path}")
+            model = algorithms[algorithm_name].load(model_path, env=self.env)
+        else:
+            if model_path:
+                self.get_logger().warning(f"Model path {model_path} not found. Initializing a new model.")
+            model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1)
+        return model
 
     def train_and_evaluate(self):
         """Train the model on each position pair and evaluate."""
@@ -133,6 +143,7 @@ def main(args=None):
     arg_parser.add_argument('--timesteps', type=int, default=1000, help='Number of timesteps to train per task')
     arg_parser.add_argument('--episodes', type=int, default=5, help='Number of episodes to evaluate per task')
     arg_parser.add_argument('--positions_file', type=str, default=None, help='Path to positions file for curriculum learning')
+    arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
 
     parsed = arg_parser.parse_args(args=args)
 
@@ -146,11 +157,12 @@ def main(args=None):
             algorithm=parsed.algorithm,
             timesteps=parsed.timesteps,
             episodes=parsed.episodes,
-            positions_file=parsed.positions_file
+            positions_file=parsed.positions_file,
+            model_path=parsed.model_path
         )
         node.train_and_evaluate()
         node.close()
     except Exception as e:
-        node.get_logger().error(f"An error occurred: {e}")
+        print(f"An error occurred: {e}", file=sys.stderr)
     finally:
         rclpy.shutdown()
