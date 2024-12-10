@@ -14,6 +14,7 @@ from gz.msgs11.boolean_pb2 import Boolean
 import time
 import math
 
+
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, start_position, goal_position, max_wait_for_observation=5.0):
         super().__init__()
@@ -31,12 +32,12 @@ class TurtleBotNavEnv(gym.Env):
         self.observation_space = gym.spaces.Box(
             low=0.0, high=10.0, shape=(640,), dtype=np.float32
         )
-        
+
         # Pub/Sub
         self.cmd_vel_pub = self.node.create_publisher(TwistStamped, '/cmd_vel', 10)
         self.scan_sub = self.node.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.odom_sub = self.node.create_subscription(Odometry, '/odom', self.odom_callback, 10)
-        
+
         # State
         self.state = None
         self.start_position = np.array(start_position, dtype=np.float32)
@@ -53,6 +54,19 @@ class TurtleBotNavEnv(gym.Env):
         self.max_wait_for_observation = max_wait_for_observation
         self.collision_count = 0
 
+        # New attributes for improved reward tracking
+        self.previous_position = np.copy(self.start_position)
+        self.stationary_steps = 0
+        self.stationary_threshold = 0.01  # Threshold to consider the robot as stationary
+        self.max_stationary_steps = 100  # Maximum allowed stationary steps before penalty
+
+        # Reward coefficients
+        self.alpha = 1.0  # Weight for distance improvement
+        self.beta = 1.0  # Weight for distance regression
+        self.collision_penalty = 100.0
+        self.step_penalty = 0.1  # Increased step penalty to discourage taking too long
+        self.stationary_penalty = 50.0
+
         self._reset_robot_position()
 
         self._print_and_log("TurtleBotNavEnv initialized.")
@@ -62,7 +76,7 @@ class TurtleBotNavEnv(gym.Env):
         self.state = np.array(msg.ranges, dtype=np.float32)
 
     def odom_callback(self, msg):
-        """Ipdates current position."""
+        """Updates current position."""
         self.current_position = np.array([
             msg.pose.pose.position.x,
             msg.pose.pose.position.y
@@ -92,7 +106,9 @@ class TurtleBotNavEnv(gym.Env):
         # Reset state
         self.state = None
         self.current_position = np.copy(self.start_position)
+        self.previous_position = np.copy(self.start_position)
         self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+        self.stationary_steps = 0
 
         # Wait for initial observations
         if not self._wait_for_new_state():
@@ -113,11 +129,10 @@ class TurtleBotNavEnv(gym.Env):
         reward = self._calculate_reward()
         done = self._is_done()
         info = {}
-        terminated = self._is_done()
+        terminated = done
         truncated = False
 
         self._print_and_log(f"{self.current_position} -> {self.goal_position} | Reward: {reward}")
-
 
         return self._get_state(), reward, terminated, truncated, info
 
@@ -128,13 +143,13 @@ class TurtleBotNavEnv(gym.Env):
         msg.header.frame_id = "base_link"
 
         if action == 0:  # Forward
-            msg.twist.linear.x = 5.0
+            msg.twist.linear.x = 0.5
         elif action == 1:  # Left
-            msg.twist.angular.z = 2.5
+            msg.twist.angular.z = 0.5
         elif action == 2:  # Right
-            msg.twist.angular.z = -2.5
+            msg.twist.angular.z = -0.5
         elif action == 3:  # Backwards
-            msg.twist.linear.x = -5.0
+            msg.twist.linear.x = -0.5
 
         self.cmd_vel_pub.publish(msg)
 
@@ -154,20 +169,24 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self):
         """
-        Reward is based on progress towards the goal.
-        Moving closer to the goal yields positive reward,
-        collisions yield a penalty.
+        Enhanced reward function:
+        - Positive reward for moving closer to the goal.
+        - Negative reward for moving away from the goal.
+        - Large negative reward for collisions.
+        - Small negative reward each step to encourage efficiency.
+        - Additional penalty if the robot remains stationary for too long.
         """
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        improvement = (self.last_distance_to_goal - distance_to_goal) + 5
-        reward = improvement
-        # TODO: Unknown if we need steps of improvement
-#         reward = improvement * self.steps_of_improvement
+        delta_distance = self.last_distance_to_goal - distance_to_goal
 
-        # TODO: add reward for facing away wall (in terms of front angle)
-        # TODO: consider translational velocity and angular velocity
-        # TODO: wba obstacles?
+        # Reward for moving closer to the goal
+        if delta_distance > 0:
+            reward = self.alpha * delta_distance
+        else:
+            # Penalty for moving away from the goal
+            reward = self.beta * delta_distance  # delta_distance is negative here
 
+        # Update best distance and improvement trackers
         if distance_to_goal < self.best_distance_to_goal:
             self.best_distance_to_goal = distance_to_goal
             self.steps_since_improvement = 0
@@ -176,13 +195,28 @@ class TurtleBotNavEnv(gym.Env):
             self.steps_since_improvement += 1
             self.steps_of_improvement = 0
 
+        # Penalty for collision
         if self._is_collision():
-            reward -= 100.0
+            reward -= self.collision_penalty
 
-        # step penalty to encourage efficient navigation
-        reward -= 0.001
+        # Step penalty to encourage efficient navigation
+        reward -= self.step_penalty
 
+        # Check for stationary
+        position_change = np.linalg.norm(self.current_position - self.previous_position)
+        if position_change < self.stationary_threshold:
+            self.stationary_steps += 1
+            if self.stationary_steps > self.max_stationary_steps:
+                reward -= self.stationary_penalty
+                self.stationary_steps = 0  # Reset after penalizing
+                self._print_and_log("Penalty for being stationary.")
+        else:
+            self.stationary_steps = 0  # Reset if the robot is moving
+
+        # Update previous position and last distance
+        self.previous_position = np.copy(self.current_position)
         self.last_distance_to_goal = distance_to_goal
+
         return reward
 
     def _is_done(self):
@@ -190,8 +224,9 @@ class TurtleBotNavEnv(gym.Env):
         Episode ends if:
         - The robot collides with an obstacle.
         - The robot reaches the goal within a certain threshold.
+        - No improvement in a while.
+        - Too many collisions.
         """
-
         # End if goal reached
         if np.linalg.norm(self.goal_position - self.current_position) < 0.5:
             self._print_and_log("Goal reached!")
@@ -204,18 +239,11 @@ class TurtleBotNavEnv(gym.Env):
             self.done = True
             return True
 
+        # End if too many collisions
         if self.collision_count > 10:
             self._print_and_log("Too many collisions.")
             self.done = True
             return True
-
-        # End if robot moves away from the goal
-#         current_distance = np.linalg.norm(self.goal_position - self.current_position)
-#         if (current_distance - self.best_distance_to_goal) > self.distance_degradation_limit:
-#             self._print_and_log("Moving too far away from the goal.")
-#             # TODO: Should we penalize or just end episode immediately?
-#             self.done = True
-#             return True
 
         return self.done
 
@@ -227,9 +255,9 @@ class TurtleBotNavEnv(gym.Env):
         collision_threshold = 0.5
 
         collision = (self.state is not None) and (np.min(self.state) < collision_threshold)
-        if self.collision != True and collision == True: # Only increment if not already in collision
+        if not self.collision and collision:
             self.collision_count += 1
-            self._print_and_log(f"Collision!")
+            self._print_and_log(f"Total collisions: {self.collision_count}")
 
         self.collision = collision
 
@@ -267,15 +295,16 @@ class TurtleBotNavEnv(gym.Env):
         service_name = "/world/rl_maze/set_pose"
         timeout_ms = 1000
 
-        result, response = node.request(service_name, pose_msg, Pose, Boolean, timeout_ms)
-    
-        if not result or not response.data:
-            raise RuntimeError("Failed to reset the robot position.")
+        try:
+            result, response = node.request(service_name, pose_msg, Pose, Boolean, timeout_ms)
+            if not response.data:
+                raise RuntimeError("Failed to reset the robot position.")
+        except Exception as e:
+            raise RuntimeError(f"Service call failed: {e}")
 
         time.sleep(0.1)
 
     def _print_and_log(self, message):
-        print(message)
         self.node.get_logger().info(message)
 
     def close(self):
