@@ -48,6 +48,15 @@ for pose_element in ['z', 'yaw']:
 
 
 def generate_launch_description():
+    print(r"""
+    _________   _________           ________________  ____ 
+    \_   ___ \ /   _____/          /  _____/\_____  \/_   |
+    /    \  \/ \_____  \   ______ /   __  \   _(__  < |   |
+    \     \____/        \ /_____/ \  |__\  \ /       \|   |
+     \______  /_______  /          \_____  //______  /|___|
+            \/        \/                 \/        \/      
+    """)
+
     # Directories
     pkg_turtlebot4_gz_bringup = get_package_share_directory(
         'turtlebot4_gz_bringup')
