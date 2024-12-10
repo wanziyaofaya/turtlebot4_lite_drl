@@ -67,13 +67,6 @@ class TurtleBotNavEnv(gym.Env):
         self.stationary_threshold = 0.01  # Threshold to consider the robot as stationary
         self.max_stationary_steps = 100  # Maximum allowed stationary steps before penalty
 
-        # Reward Coefficients
-        self.alpha = 10000.0
-        self.beta = 10000.0
-        self.collision_penalty = 100.0
-        self.step_penalty = 1
-        self.stationary_penalty = 50.0
-
         # Odometry offset variables
         self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
         self.odom_orientation_offset = 0.0
@@ -234,11 +227,8 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self):
         """
-        - Positive reward exponentially increasing as the robot approaches the goal.
-        - Negative reward exponentially increasing as the robot moves away from the goal.
-        - Large negative reward for collisions.
-        - Small negative reward each step to encourage efficiency.
-        - Additional penalty if the robot remains stationary for too long.
+        Enhanced reward function with normalized coefficients, immediate collision handling,
+        and additional orientation-based rewards.
         """
         # Distance to goal
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
@@ -246,51 +236,73 @@ class TurtleBotNavEnv(gym.Env):
 
         # Initialize reward
         reward = 0.0
+        alpha = 10.0  # Positive reward scaling
+        beta = 5.0  # Negative reward scaling
+        collision_penalty = 100.0
+        step_penalty = 0.1
+        stationary_penalty = 10.0
 
+        # Positive reward for moving closer to the goal
         if distance_improvement > 0:
+            reward += alpha * distance_improvement
             self.steps_since_improvement = 0
             self.steps_of_improvement += 1
-
-            # Scale the distance improvement based on curriculum level
-            scaled_improvement = self.alpha * distance_improvement
-
-            # Add an exponential bonus based on distance to goal
-            exponential_bonus = np.exp(-distance_to_goal)
-            reward += scaled_improvement * (1 + exponential_bonus)
-
-            self._print_and_log(f"Positive reward: {self.alpha} * {distance_improvement} * (1 + exp(-{distance_to_goal})) = {reward}")
+            self._print_and_log(f"Positive reward: {alpha} * {distance_improvement} = {alpha * distance_improvement}")
         else:
-            # Negative reward for moving away from the goal. Distance improvement is negative.
-            reward += self.beta * (distance_improvement - .001)
-            self._print_and_log(f"Negative reward: {self.beta} * {distance_improvement} = {self.beta * distance_improvement}")
+            # Negative reward for moving away from the goal
+            reward += beta * (distance_improvement - 0.1)
+            self.steps_since_improvement += 1
+            self._print_and_log(f"Negative reward: {beta} * {distance_improvement} = {beta * distance_improvement}")
 
         # Penalize collisions
         if self.collision:
-            reward -= self.collision_penalty * (self.collision_count + 1)
-            self._print_and_log(f"Collision penalty applied: -{self.collision_penalty}")
+            reward -= collision_penalty
+            self._print_and_log(f"Collision penalty applied: -{collision_penalty}")
+            # Optionally, terminate the episode immediately upon collision
+            self.done = True
 
-        # Penalize each step
-        reward -= self.step_penalty
-        self._print_and_log(f"Step penalty applied: -{self.step_penalty}")
+        # Penalize each step to encourage efficiency
+        reward -= step_penalty
+        self._print_and_log(f"Step penalty applied: -{step_penalty}")
 
-        # Penalize stationary robot
+        # Penalize stationary behavior
         position_change = np.linalg.norm(self.current_position - self.previous_position)
         if position_change < self.stationary_threshold:
             self.stationary_steps += 1
             if self.stationary_steps > self.max_stationary_steps:
-                reward -= self.stationary_penalty
+                reward -= stationary_penalty
                 self.stationary_steps = 0  # Reset after penalizing
-                self._print_and_log(f"Stationary penalty applied: -{self.stationary_penalty}")
+                self._print_and_log(f"Stationary penalty applied: -{stationary_penalty}")
         else:
             self.stationary_steps = 0  # Reset if the robot is moving
+
+        # Orientation reward: encourage facing towards the goal
+        desired_yaw = math.atan2(
+            self.goal_position[1] - self.current_position[1],
+            self.goal_position[0] - self.current_position[0]
+        )
+        yaw_diff = self._angle_difference(self.current_yaw, desired_yaw)
+        orientation_reward = (math.pi - abs(yaw_diff)) / math.pi  # Normalized between 0 and 1
+        reward += orientation_reward  # Small positive reward for better orientation
+        self._print_and_log(f"Orientation reward: {orientation_reward}")
 
         # Update previous position and last distance
         self.previous_position = np.copy(self.current_position)
         self.last_distance_to_goal = distance_to_goal
 
         self._print_and_log(f"Total reward: {reward}")
-
         return reward
+
+    def _angle_difference(self, current, target):
+        """
+        Compute the smallest difference between two angles.
+        """
+        diff = target - current
+        while diff > math.pi:
+            diff -= 2 * math.pi
+        while diff < -math.pi:
+            diff += 2 * math.pi
+        return diff
 
     def _is_done(self):
         """
