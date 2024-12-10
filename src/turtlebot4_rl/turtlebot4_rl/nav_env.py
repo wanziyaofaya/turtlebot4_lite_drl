@@ -68,8 +68,8 @@ class TurtleBotNavEnv(gym.Env):
         self.max_stationary_steps = 100  # Maximum allowed stationary steps before penalty
 
         # Reward Coefficients
-        self.alpha = 1.0  # Weight for distance improvement
-        self.beta = 1.0  # Weight for distance regression
+        self.alpha = 10000.0  # Weight for distance improvement
+        self.beta = 10000.0  # Weight for distance regression
         self.collision_penalty = 100.0
         self.step_penalty = 0.1  # Increased step penalty to discourage taking too long
         self.stationary_penalty = 50.0
@@ -229,7 +229,6 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self):
         """
-        Enhanced reward function:
         - Positive reward for moving closer to the goal.
         - Negative reward for moving away from the goal.
         - Large negative reward for collisions.
