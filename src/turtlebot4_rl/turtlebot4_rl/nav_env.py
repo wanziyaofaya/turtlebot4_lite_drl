@@ -13,6 +13,7 @@ from gz.msgs11.pose_pb2 import Pose
 from gz.msgs11.boolean_pb2 import Boolean
 import time
 import math
+import tf_transformations  # For quaternion to euler conversions
 
 
 class TurtleBotNavEnv(gym.Env):
@@ -43,6 +44,7 @@ class TurtleBotNavEnv(gym.Env):
         self.start_position = np.array(start_position, dtype=np.float32)
         self.goal_position = np.array(goal_position, dtype=np.float32)
         self.current_position = np.copy(self.start_position)
+        self.current_yaw = 0.0  # Current orientation (yaw)
         self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         self.best_distance_to_goal = np.linalg.norm(self.goal_position - self.start_position)
         self.steps_since_improvement = 0
@@ -54,22 +56,23 @@ class TurtleBotNavEnv(gym.Env):
         self.max_wait_for_observation = max_wait_for_observation
         self.collision_count = 0
 
-        # New attributes for improved reward tracking
+        # Reward Tracking Variables
         self.previous_position = np.copy(self.start_position)
         self.stationary_steps = 0
         self.stationary_threshold = 0.01  # Threshold to consider the robot as stationary
         self.max_stationary_steps = 100  # Maximum allowed stationary steps before penalty
 
-        # Reward coefficients
+        # Reward Coefficients
         self.alpha = 1.0  # Weight for distance improvement
         self.beta = 1.0  # Weight for distance regression
         self.collision_penalty = 100.0
         self.step_penalty = 0.1  # Increased step penalty to discourage taking too long
         self.stationary_penalty = 50.0
 
-
+        # Odometry offset variables
+        self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
+        self.odom_orientation_offset = 0.0
         self.odom_calibrated = False
-        self.odom_offset = np.array([0.0, 0.0], dtype=np.float32)
 
         self._reset_robot_position()
         self._print_and_log("TurtleBotNavEnv initialized.")
@@ -79,19 +82,42 @@ class TurtleBotNavEnv(gym.Env):
         self.state = np.array(msg.ranges, dtype=np.float32)
 
     def odom_callback(self, msg):
-        """Updates current position."""
+        """Updates current position and orientation, applying odometry offsets if calibrated."""
+        # Extract position
+        odom_x = msg.pose.pose.position.x
+        odom_y = msg.pose.pose.position.y
+
+        # Extract orientation (yaw)
+        odom_q = msg.pose.pose.orientation
+        odom_euler = tf_transformations.euler_from_quaternion([
+            odom_q.x,
+            odom_q.y,
+            odom_q.z,
+            odom_q.w
+        ])
+        odom_yaw = odom_euler[2]  # Yaw angle
+
         if not self.odom_calibrated:
-            self.odom_offset = np.array([
-                msg.pose.pose.position.x - self.start_position[0],
-                msg.pose.pose.position.y - self.start_position[1]
+            # Calibrate odometry offsets
+            self.odom_position_offset = np.array([
+                odom_x - self.start_position[0],
+                odom_y - self.start_position[1]
             ], dtype=np.float32)
+            self.odom_orientation_offset = odom_yaw  # Assuming start yaw is 0.0
             self.odom_calibrated = True
+            self._print_and_log(f"Odometry calibrated. Position offset: {self.odom_position_offset}, Orientation offset: {self.odom_orientation_offset} radians.")
             return
 
-        self.current_position = np.array([
-            msg.pose.pose.position.x - self.odom_offset[0],
-            msg.pose.pose.position.y - self.odom_offset[1]
-        ], dtype=np.float32)
+        # Apply position offset
+        adjusted_x = odom_x - self.odom_position_offset[0]
+        adjusted_y = odom_y - self.odom_position_offset[1]
+        self.current_position = np.array([adjusted_x, adjusted_y], dtype=np.float32)
+
+        # Apply orientation offset
+        adjusted_yaw = odom_yaw - self.odom_orientation_offset
+        # Normalize yaw to [-pi, pi]
+        adjusted_yaw = (adjusted_yaw + math.pi) % (2 * math.pi) - math.pi
+        self.current_yaw = adjusted_yaw
 
     def seed(self, seed=0):
         """Set the random seed for reproducibility."""
@@ -114,9 +140,8 @@ class TurtleBotNavEnv(gym.Env):
         # Reset position in Gazebo
         self._reset_robot_position()
 
-        # Reset state
+        # Reset state variables
         self.state = None
-        self.current_position = np.copy(self.start_position)
         self.previous_position = np.copy(self.start_position)
         self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         self.stationary_steps = 0
@@ -285,16 +310,9 @@ class TurtleBotNavEnv(gym.Env):
             rclpy.spin_once(self.node, timeout_sec=0.1)
         return self.state is not initial_state
 
-    def _calibrate_odom(self):
-        """Spinlock until odometry callback received to determine correct offsets to use"""
-        self.odom_calibrated = False
-        while not self.odom_calibrated:
-            rclpy.spin_once(self.node, timeout_sec=0.1)
-        self._print_and_log(f"Odometry calibrated: {self.odom_offset}")
-
     def _reset_robot_position(self):
         """
-        Reset the robot's position
+        Reset the robot's position and synchronize odometry.
         """
         node = Node()
         pose_msg = Pose()
@@ -323,6 +341,23 @@ class TurtleBotNavEnv(gym.Env):
         time.sleep(0.1)
 
         self._calibrate_odom()
+
+    def _calibrate_odom(self):
+        """Spinlock until odometry callback received to determine correct offsets to use."""
+        self.odom_calibrated = False
+        self.odom_offset = np.array([0.0, 0.0], dtype=np.float32)
+        self.odom_orientation_offset = 0.0
+
+        self._print_and_log("Calibrating odometry offsets...")
+
+        start_time = time.time()
+        timeout = 5.0  # seconds
+
+        while not self.odom_calibrated and (time.time() - start_time) < timeout:
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+            # The odom_callback will set odom_calibrated to True
+        if not self.odom_calibrated:
+            raise RuntimeError("Odometry calibration timed out.")
 
     def _print_and_log(self, message):
         self.node.get_logger().info(message)
