@@ -67,8 +67,11 @@ class TurtleBotNavEnv(gym.Env):
         self.step_penalty = 0.1  # Increased step penalty to discourage taking too long
         self.stationary_penalty = 50.0
 
-        self._reset_robot_position()
 
+        self.odom_calibrated = False
+        self.odom_offset = np.array([0.0, 0.0], dtype=np.float32)
+
+        self._reset_robot_position()
         self._print_and_log("TurtleBotNavEnv initialized.")
 
     def scan_callback(self, msg):
@@ -77,9 +80,17 @@ class TurtleBotNavEnv(gym.Env):
 
     def odom_callback(self, msg):
         """Updates current position."""
+        if not self.odom_calibrated:
+            self.odom_offset = np.array([
+                msg.pose.pose.position.x - self.start_position[0],
+                msg.pose.pose.position.y - self.start_position[1]
+            ], dtype=np.float32)
+            self.odom_calibrated = True
+            return
+
         self.current_position = np.array([
-            msg.pose.pose.position.x,
-            msg.pose.pose.position.y
+            msg.pose.pose.position.x - self.odom_offset[0],
+            msg.pose.pose.position.y - self.odom_offset[1]
         ], dtype=np.float32)
 
     def seed(self, seed=0):
@@ -274,6 +285,13 @@ class TurtleBotNavEnv(gym.Env):
             rclpy.spin_once(self.node, timeout_sec=0.1)
         return self.state is not initial_state
 
+    def _calibrate_odom(self):
+        """Spinlock until odometry callback received to determine correct offsets to use"""
+        self.odom_calibrated = False
+        while not self.odom_calibrated:
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+        self._print_and_log(f"Odometry calibrated: {self.odom_offset}")
+
     def _reset_robot_position(self):
         """
         Reset the robot's position
@@ -303,6 +321,8 @@ class TurtleBotNavEnv(gym.Env):
             raise RuntimeError(f"Service call failed: {e}")
 
         time.sleep(0.1)
+
+        self._calibrate_odom()
 
     def _print_and_log(self, message):
         self.node.get_logger().info(message)
