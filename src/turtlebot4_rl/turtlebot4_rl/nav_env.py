@@ -68,10 +68,10 @@ class TurtleBotNavEnv(gym.Env):
         self.max_stationary_steps = 100  # Maximum allowed stationary steps before penalty
 
         # Reward Coefficients
-        self.alpha = 10000.0  # Weight for distance improvement
-        self.beta = 10000.0  # Weight for distance regression
+        self.alpha = 10000.0
+        self.beta = 10000.0
         self.collision_penalty = 100.0
-        self.step_penalty = 0.1  # Increased step penalty to discourage taking too long
+        self.step_penalty = 1
         self.stationary_penalty = 50.0
 
         # Odometry offset variables
@@ -141,8 +141,13 @@ class TurtleBotNavEnv(gym.Env):
         super().seed(seed)
         np.random.seed(seed)
 
-    def reset(self, *, seed=None, options=None):
-        """Reset the environment."""
+    def reset(self, *, seed=None, options=None, start_position=None, goal_position=None):
+        """Reset the environment. Optionally set new start and goal positions."""
+        if start_position is not None:
+            self.start_position = np.array(start_position, dtype=np.float32)
+        if goal_position is not None:
+            self.goal_position = np.array(goal_position, dtype=np.float32)
+
         super().reset(seed=seed)
 
         self.steps_since_improvement = 0
@@ -229,52 +234,61 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self):
         """
-        - Positive reward for moving closer to the goal.
-        - Negative reward for moving away from the goal.
+        - Positive reward exponentially increasing as the robot approaches the goal.
+        - Negative reward exponentially increasing as the robot moves away from the goal.
         - Large negative reward for collisions.
         - Small negative reward each step to encourage efficiency.
         - Additional penalty if the robot remains stationary for too long.
         """
+        # Distance to goal
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        delta_distance = self.last_distance_to_goal - distance_to_goal
+        distance_improvement = self.last_distance_to_goal - distance_to_goal
 
-        # Reward for moving closer to the goal
-        if delta_distance > 0:
-            reward = self.alpha * delta_distance
-        else:
-            # Penalty for moving away from the goal
-            reward = self.beta * delta_distance  # delta_distance is negative here
+        # Initialize reward
+        reward = 0.0
 
-        # Update best distance and improvement trackers
-        if distance_to_goal < self.best_distance_to_goal:
-            self.best_distance_to_goal = distance_to_goal
+        if distance_improvement > 0:
             self.steps_since_improvement = 0
             self.steps_of_improvement += 1
+
+            # Scale the distance improvement based on curriculum level
+            scaled_improvement = self.alpha * distance_improvement
+
+            # Add an exponential bonus based on distance to goal
+            exponential_bonus = np.exp(-distance_to_goal)
+            reward += scaled_improvement * (1 + exponential_bonus)
+
+            self._print_and_log(f"Positive reward: {self.alpha} * {distance_improvement} * (1 + exp(-{distance_to_goal})) = {reward}")
         else:
-            self.steps_since_improvement += 1
-            self.steps_of_improvement = 0
+            # Negative reward for moving away from the goal. Distance improvement is negative.
+            reward += self.beta * (distance_improvement - .001)
+            self._print_and_log(f"Negative reward: {self.beta} * {distance_improvement} = {self.beta * distance_improvement}")
 
-        # Penalty for collision
-        if self._is_collision():
-            reward -= self.collision_penalty
+        # Penalize collisions
+        if self.collision:
+            reward -= self.collision_penalty * (self.collision_count + 1)
+            self._print_and_log(f"Collision penalty applied: -{self.collision_penalty}")
 
-        # Step penalty to encourage efficient navigation
+        # Penalize each step
         reward -= self.step_penalty
+        self._print_and_log(f"Step penalty applied: -{self.step_penalty}")
 
-        # Check for stationary
+        # Penalize stationary robot
         position_change = np.linalg.norm(self.current_position - self.previous_position)
         if position_change < self.stationary_threshold:
             self.stationary_steps += 1
             if self.stationary_steps > self.max_stationary_steps:
                 reward -= self.stationary_penalty
                 self.stationary_steps = 0  # Reset after penalizing
-                self._print_and_log("Penalty for being stationary.")
+                self._print_and_log(f"Stationary penalty applied: -{self.stationary_penalty}")
         else:
             self.stationary_steps = 0  # Reset if the robot is moving
 
         # Update previous position and last distance
         self.previous_position = np.copy(self.current_position)
         self.last_distance_to_goal = distance_to_goal
+
+        self._print_and_log(f"Total reward: {reward}")
 
         return reward
 
@@ -285,6 +299,7 @@ class TurtleBotNavEnv(gym.Env):
         - The robot reaches the goal within a certain threshold.
         - No improvement in a while.
         - Too many collisions.
+        - The robot has been stationary for too long.
         """
         # End if goal reached
         if np.linalg.norm(self.goal_position - self.current_position) < 0.5:
@@ -301,6 +316,12 @@ class TurtleBotNavEnv(gym.Env):
         # End if too many collisions
         if self.collision_count > 10:
             self._print_and_log("Too many collisions.")
+            self.done = True
+            return True
+
+        # End if the robot has been stationary for too long
+        if self.stationary_steps > self.max_stationary_steps:
+            self._print_and_log("Robot has been stationary for too long. Resetting environment.")
             self.done = True
             return True
 
