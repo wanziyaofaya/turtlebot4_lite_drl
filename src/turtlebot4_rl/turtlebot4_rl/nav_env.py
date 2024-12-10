@@ -17,17 +17,22 @@ import tf_transformations  # For quaternion to euler conversions
 
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, start_position, goal_position, max_wait_for_observation=5.0):
+    def __init__(self, start_position, goal_position, is_continous, max_wait_for_observation=5.0):
         super().__init__()
 
         if not rclpy.ok():
             rclpy.init(args=None)
 
         self.node = rclpy.create_node('turtlebot_nav_env')
+        self.is_continous = is_continous
 
-        # Define action and observation spaces
-        # 4 Discrete Actions (forward, backwards, left, right)
-        self.action_space = gym.spaces.Discrete(4)
+        # Define action spaces
+        if self.is_continous:
+            # 4 Discrete Actions (forward, backwards, left, right) vs Continous
+            self.action_space = gym.spaces.Discrete(4)
+        else:
+            # Bounds for moving [linear, angular]
+            self.action_space = gym.spaces.Box(low=np.array([-3.0, -1.5]), high=np.array([3.0, 1.5]), dtype=np.float32)
 
         # Continuous observation (LiDAR scans)
         self.observation_space = gym.spaces.Box(
@@ -178,14 +183,21 @@ class TurtleBotNavEnv(gym.Env):
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
 
-        if action == 0:  # Forward
-            msg.twist.linear.x = 0.5
-        elif action == 1:  # Left
-            msg.twist.angular.z = 0.5
-        elif action == 2:  # Right
-            msg.twist.angular.z = -0.5
-        elif action == 3:  # Backwards
-            msg.twist.linear.x = -0.5
+        print(action)
+
+        if self.is_continous:
+            if action == 0:  # Forward
+                msg.twist.linear.x = 0.5
+            elif action == 1:  # Left
+                msg.twist.angular.z = 0.5
+            elif action == 2:  # Right
+                msg.twist.angular.z = -0.5
+            elif action == 3:  # Backwards
+                msg.twist.linear.x = -0.5
+        else:
+            linear, angular = action
+            msg.twist.linear.x = float(linear)
+            msg.twist.angular.z = float(angular)
 
         self.cmd_vel_pub.publish(msg)
 

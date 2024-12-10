@@ -17,7 +17,7 @@ class TurtleBotRLNode(Node):
         self.goal_position = np.array(self.get_parameter('goal_position').value)
         self.algorithm = self.get_parameter('algorithm').value.upper()
 
-        self.env = TurtleBotNavEnv(self.start_position, self.goal_position)
+        self.env = TurtleBotNavEnv(self.start_position, self.goal_position, self.algorithm == 'DQN')
         self.env.goal_position = self.goal_position
 
         self.model = self._load_algorithm(self.algorithm)
