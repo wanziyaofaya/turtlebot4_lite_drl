@@ -252,8 +252,8 @@ class TurtleBotNavEnv(gym.Env):
 
         # Initialize reward
         reward = 0.0
-        alpha = 10.0  # Positive reward scaling
-        beta = 5.0  # Negative reward scaling
+        alpha = 5000.0  # Positive reward scaling
+        beta = 10000.0  # Negative reward scaling
         collision_penalty = 100.0
         step_penalty = 0.1
         stationary_penalty = 10.0
