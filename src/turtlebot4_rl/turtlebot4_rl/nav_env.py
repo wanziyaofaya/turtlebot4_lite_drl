@@ -79,7 +79,15 @@ class TurtleBotNavEnv(gym.Env):
         # Oscillation Tracking Variables
         self.direction_history = []       # Stores recent movement directions: 1 (toward), -1 (away), 0 (same)
         self.max_history = 20             # Number of recent steps to consider
+        self.oscillation_penalty = 20.0   # Penalty for oscillations
         self.oscillation_threshold = 4    # Number of allowable direction changes within history
+
+        # Progress Tracking Variable
+        self.last_progress_time = time.time()  # Timestamp of the last progress towards the goal
+        self.stationary_count = 0
+
+        # Episode Start Time for Absolute Timeout
+        self.episode_start_time = None  # To track when the episode started
 
         self._reset_robot_position()
         self._print_and_log("TurtleBotNavEnv initialized.")
@@ -169,6 +177,12 @@ class TurtleBotNavEnv(gym.Env):
         # Reset oscillation tracking
         self.direction_history = []
 
+        # Reset progress tracking
+        self.last_progress_time = time.time()
+
+        # Reset episode start time for absolute timeout
+        self.episode_start_time = time.time()
+
         # Wait for initial observations
         if not self._wait_for_new_state():
             raise RuntimeError("No LiDAR data received after reset timeout.")
@@ -200,8 +214,6 @@ class TurtleBotNavEnv(gym.Env):
         msg = TwistStamped()
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
-
-        print(action)
 
         if self.is_discrete:
             if action == 0:  # Forward
@@ -247,30 +259,30 @@ class TurtleBotNavEnv(gym.Env):
         stationary_penalty = 10.0
         oscillation_penalty = 20.0
 
-        # Determine movement direction
+        # Positive reward for moving closer to the goal
         if distance_improvement > 0:
-            movement_direction = 1  # Moving closer to the goal
+            # Potential-based shaping: difference in potential
             reward += alpha * distance_improvement
             self.steps_since_improvement = 0
             self.steps_of_improvement += 1
+            # Update progress time
+            self.last_progress_time = time.time()
             self._print_and_log(f"Positive reward: {alpha} * {distance_improvement} = {alpha * distance_improvement}")
-        elif distance_improvement < 0:
-            movement_direction = -1  # Moving away from the goal
+        else:
+            # Negative reward for moving away from the goal
             reward += beta * distance_improvement  # distance_improvement is negative
             self.steps_since_improvement += 1
             self._print_and_log(f"Negative reward: {beta} * {distance_improvement} = {beta * distance_improvement}")
-        else:
-            movement_direction = 0  # No change
-            self._print_and_log("No distance improvement.")
 
-        # Update direction history
-        self._update_direction_history(movement_direction)
+        # Penalize each step to encourage efficiency
+        reward -= step_penalty
+        self._print_and_log(f"Step penalty applied: -{step_penalty}")
 
-        # Penalize oscillations
+        # Penalize oscillatory movements
         oscillations = self._count_oscillations()
         if oscillations > self.oscillation_threshold:
-            reward -= oscillation_penalty
-            self._print_and_log(f"Oscillation penalty applied: -{oscillation_penalty} (Oscillations: {oscillations})")
+            reward -= self.oscillation_penalty
+            self._print_and_log(f"Oscillation penalty applied: -{self.oscillation_penalty} (Oscillations: {oscillations})")
 
         # Penalize collisions
         if self.collision:
@@ -294,15 +306,16 @@ class TurtleBotNavEnv(gym.Env):
         else:
             self.stationary_steps = 0  # Reset if the robot is moving
 
-        # Orientation reward: encourage facing towards the goal
+        # Orientation reward: Encourage facing towards the goal
         desired_yaw = math.atan2(
             self.goal_position[1] - self.current_position[1],
             self.goal_position[0] - self.current_position[0]
         )
         yaw_diff = self._angle_difference(self.current_yaw, desired_yaw)
         orientation_reward = (math.pi - abs(yaw_diff)) / math.pi  # Normalized between 0 and 1
-        reward += orientation_reward  # Small positive reward for better orientation
-        self._print_and_log(f"Orientation reward: {orientation_reward}")
+        orientation_scale = 1.0  # Scaling factor for orientation reward
+        reward += orientation_scale * orientation_reward
+        self._print_and_log(f"Orientation reward: {orientation_scale * orientation_reward}")
 
         # Update previous position and last distance
         self.previous_position = np.copy(self.current_position)
@@ -349,6 +362,7 @@ class TurtleBotNavEnv(gym.Env):
         - No improvement in a while.
         - Too many collisions.
         - The robot has been stationary for too long.
+        - 5 minutes have elapsed since the episode started.
         """
         # End if goal reached
         if np.linalg.norm(self.goal_position - self.current_position) < 0.5:
@@ -373,6 +387,15 @@ class TurtleBotNavEnv(gym.Env):
             self._print_and_log("Robot has been stationary for too long. Resetting environment.")
             self.done = True
             return True
+
+        # End if 5 minutes have elapsed since the episode started
+        if self.episode_start_time is not None:
+            current_time = time.time()
+            elapsed_time = current_time - self.episode_start_time
+            if elapsed_time > 300:  # 5 minutes = 300 seconds
+                self._print_and_log("5 minutes elapsed. Resetting environment.")
+                self.done = True
+                return True
 
         return self.done
 
@@ -448,7 +471,6 @@ class TurtleBotNavEnv(gym.Env):
 
         while not self.odom_calibrated and (time.time() - start_time) < timeout:
             rclpy.spin_once(self.node, timeout_sec=0.1)
-            # The odom_callback will set odom_calibrated to True
         if not self.odom_calibrated:
             raise RuntimeError("Odometry calibration timed out.")
 
