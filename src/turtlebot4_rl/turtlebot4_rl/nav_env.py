@@ -17,18 +17,18 @@ import tf_transformations  # For quaternion to euler conversions
 
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, start_position, goal_position, is_continous, max_wait_for_observation=5.0):
+    def __init__(self, start_position, goal_position, is_discrete, max_wait_for_observation=5.0):
         super().__init__()
 
         if not rclpy.ok():
             rclpy.init(args=None)
 
         self.node = rclpy.create_node('turtlebot_nav_env')
-        self.is_continous = is_continous
+        self.is_discrete = is_discrete
 
         # Define action spaces
-        if self.is_continous:
-            # 4 Discrete Actions (forward, backwards, left, right) vs Continous
+        if self.is_discrete:
+            # 4 Discrete Actions (forward, backwards, left, right) vs Continuous
             self.action_space = gym.spaces.Discrete(4)
         else:
             # Bounds for moving [linear, angular]
@@ -185,7 +185,7 @@ class TurtleBotNavEnv(gym.Env):
 
         print(action)
 
-        if self.is_continous:
+        if self.is_discrete:
             if action == 0:  # Forward
                 msg.twist.linear.x = 0.5
             elif action == 1:  # Left
