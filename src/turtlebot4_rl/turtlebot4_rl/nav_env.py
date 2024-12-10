@@ -76,6 +76,11 @@ class TurtleBotNavEnv(gym.Env):
         # Yaw Offset Variable
         self.yaw_offset = 0.0  # Yaw offset to align with desired yaw
 
+        # Oscillation Tracking Variables
+        self.direction_history = []       # Stores recent movement directions: 1 (toward), -1 (away), 0 (same)
+        self.max_history = 20             # Number of recent steps to consider
+        self.oscillation_threshold = 4    # Number of allowable direction changes within history
+
         self._reset_robot_position()
         self._print_and_log("TurtleBotNavEnv initialized.")
 
@@ -161,6 +166,9 @@ class TurtleBotNavEnv(gym.Env):
         self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         self.stationary_steps = 0
 
+        # Reset oscillation tracking
+        self.direction_history = []
+
         # Wait for initial observations
         if not self._wait_for_new_state():
             raise RuntimeError("No LiDAR data received after reset timeout.")
@@ -226,10 +234,6 @@ class TurtleBotNavEnv(gym.Env):
         return self.state
 
     def _calculate_reward(self):
-        """
-        Enhanced reward function with normalized coefficients, immediate collision handling,
-        and additional orientation-based rewards.
-        """
         # Distance to goal
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         distance_improvement = self.last_distance_to_goal - distance_to_goal
@@ -241,18 +245,32 @@ class TurtleBotNavEnv(gym.Env):
         collision_penalty = 100.0
         step_penalty = 0.1
         stationary_penalty = 10.0
+        oscillation_penalty = 20.0
 
-        # Positive reward for moving closer to the goal
+        # Determine movement direction
         if distance_improvement > 0:
+            movement_direction = 1  # Moving closer to the goal
             reward += alpha * distance_improvement
             self.steps_since_improvement = 0
             self.steps_of_improvement += 1
             self._print_and_log(f"Positive reward: {alpha} * {distance_improvement} = {alpha * distance_improvement}")
-        else:
-            # Negative reward for moving away from the goal
-            reward += beta * (distance_improvement - 0.1)
+        elif distance_improvement < 0:
+            movement_direction = -1  # Moving away from the goal
+            reward += beta * distance_improvement  # distance_improvement is negative
             self.steps_since_improvement += 1
             self._print_and_log(f"Negative reward: {beta} * {distance_improvement} = {beta * distance_improvement}")
+        else:
+            movement_direction = 0  # No change
+            self._print_and_log("No distance improvement.")
+
+        # Update direction history
+        self._update_direction_history(movement_direction)
+
+        # Penalize oscillations
+        oscillations = self._count_oscillations()
+        if oscillations > self.oscillation_threshold:
+            reward -= oscillation_penalty
+            self._print_and_log(f"Oscillation penalty applied: -{oscillation_penalty} (Oscillations: {oscillations})")
 
         # Penalize collisions
         if self.collision:
@@ -303,6 +321,25 @@ class TurtleBotNavEnv(gym.Env):
         while diff < -math.pi:
             diff += 2 * math.pi
         return diff
+
+    def _update_direction_history(self, movement_direction):
+        """
+        Update the movement direction history with the latest movement.
+        """
+        self.direction_history.append(movement_direction)
+        if len(self.direction_history) > self.max_history:
+            self.direction_history.pop(0)
+
+    def _count_oscillations(self):
+        """
+        Count the number of direction changes in the recent movement history.
+        Oscillation is detected when the movement direction alternates frequently.
+        """
+        oscillations = 0
+        for i in range(1, len(self.direction_history)):
+            if self.direction_history[i] != 0 and self.direction_history[i] != self.direction_history[i-1]:
+                oscillations += 1
+        return oscillations
 
     def _is_done(self):
         """
