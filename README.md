@@ -1,5 +1,5 @@
 # A DRL framework for turtlebot4-lite
-## Install wsl
+## Install wsl-ubuntu24.04
 ```
 wsl install Ubuntu-24.04
 ```
