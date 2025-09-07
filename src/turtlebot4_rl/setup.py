@@ -13,6 +13,10 @@ setup(
     description='Reinforcement Learning for TurtleBot4',
     license='Apache License 2.0',
     tests_require=['pytest'],
+    data_files=[
+        ('share/turtlebot4_rl', ['package.xml']),
+        ('share/ament_index/resource_index/packages', ['resource/turtlebot4_rl']),
+    ],
     entry_points={
         'console_scripts': [
             'rl_node = turtlebot4_rl.rl_node:main',  # Ensure this is correct
