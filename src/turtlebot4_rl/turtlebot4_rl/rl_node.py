@@ -166,3 +166,6 @@ def main(args=None):
         print(f"An error occurred: {e}", file=sys.stderr)
     finally:
         rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
