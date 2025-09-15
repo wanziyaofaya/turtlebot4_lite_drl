@@ -35,7 +35,7 @@ source install/local_setup.bash
 source /opt/ros/jazzy/setup.bash
 source ~/turtlebot4_lite_drl/install/local_setup.bash
 export GAZEBO_PLUGIN_PATH=/opt/ros/jazzy/lib
-ros2 launch turtlebot4_gz_bringup turtlebot4_gz.launch.py model:=lite world:=rl_maze
+ros2 launch turtlebot4_gz_bringup turtlebot4_gz.launch.py model:=lite world:=maze
 
 python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py   --start_x -9.0   --start_y 3.0   --goal_x -5.0   --goal_y 3.0   --algorithm DQN   --timesteps 5000   --episodes 10   --positions_file positions/positions.txt   --model_path /absolute/path/to/model.zip
 ```
