@@ -217,6 +217,8 @@ class TurtleBotNavEnv(gym.Env):
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
 
+        self._print_and_log(f"Action received: {action}")
+
         if self.is_discrete:
             if action == 0:  # Forward
                 msg.twist.linear.x = 0.5
