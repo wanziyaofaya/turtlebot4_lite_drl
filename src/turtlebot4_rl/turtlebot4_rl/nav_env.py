@@ -193,6 +193,8 @@ class TurtleBotNavEnv(gym.Env):
         """Execute one step in the environment."""
         # Take the action
         self._take_action(action)
+        # 保存最近一次动作，供奖励函数使用
+        self.last_action = action
 
         # Spin until we get a new scan (or timeout)
         if not self._wait_for_new_state():
@@ -273,6 +275,30 @@ class TurtleBotNavEnv(gym.Env):
             reward += beta * distance_improvement  # distance_improvement is negative
             self.steps_since_improvement += 1
             self._print_and_log(f"Negative reward: {beta} * {distance_improvement} = {beta * distance_improvement}")
+
+        # 避障转弯奖励
+        collision_warning_threshold = 0.5
+        if self.state is not None and np.min(self.state) < collision_warning_threshold:
+            min_dist = np.min(self.state)
+            self._print_and_log(f"Min distance to obstacle: {min_dist}")
+            if hasattr(self, 'last_action'):
+                if self.is_discrete:
+                    # 动作1=左转，2=右转
+                    if self.last_action == 1 or self.last_action == 2:
+                        reward += 5.0  # 鼓励转弯避障
+                        self._print_and_log("Turn reward: +5.0 (discrete)")
+                    elif self.last_action == 0 or self.last_action == 3:
+                        reward -= 5.0  # 惩罚前进/后退
+                        self._print_and_log("Forward/backward penalty: -5.0 (discrete)")
+                else:
+                    # 连续动作，判断角速度
+                    if isinstance(self.last_action, (list, tuple, np.ndarray)) and len(self.last_action) == 2:
+                        if abs(self.last_action[1]) > 0.3:
+                            reward += 5.0
+                            self._print_and_log("Turn reward: +5.0 (continuous)")
+                        else:
+                            reward -= 5.0
+                            self._print_and_log("Forward penalty: -5.0 (continuous)")
 
         # Penalize each step to encourage efficiency
         reward -= step_penalty
