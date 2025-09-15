@@ -444,7 +444,7 @@ class TurtleBotNavEnv(gym.Env):
         pose_msg.orientation.y = 0.0
         pose_msg.orientation.z = math.sin(yaw / 2.0)
 
-        service_name = "/world/rl_maze/set_pose"
+        service_name = "/world/maze/set_pose"
         timeout_ms = 1000
 
         try:
