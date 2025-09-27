@@ -27,6 +27,12 @@ sudo apt install libgz-transport14-dev python3-gz-transport14
 sudo apt install libgz-msgs11-dev python3-gz-msgs11
 sudo apt install ros-${ROS_DISTRO}-tf-transformations
 ```
+## Create a venv from system packages and install other packages
+```
+python3 -m venv --system-site-packages venv
+source venv/bin/activate
+pip3 install -r requirements.txt
+```
 ## Compile and build your workspace
 ```
 colcon build --symlink-install
@@ -35,16 +41,9 @@ source install/local_setup.bash
 source /opt/ros/jazzy/setup.bash
 source ~/turtlebot4_lite_drl/install/local_setup.bash
 export GAZEBO_PLUGIN_PATH=/opt/ros/jazzy/lib
+```
+## Run code
+```
 ros2 launch turtlebot4_gz_bringup turtlebot4_gz.launch.py model:=lite world:=maze
-
-python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py   --algorithm DQN   --timesteps 5000   --episodes 10   --positions_file positions/positions.txt   --model_path /absolute/path/to/model.zip
-python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --start_x -7.0   --start_y 3.0   --goal_x -5.0   --goal_y 3.0   --model_path /home/turtlebot4/turtlebot4_lite_drl/DQN_turtlebot_model.zip
-python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py   --algorithm DQN   --timesteps 5000   --episodes 10   --positions_file positions/positions.txt
-```
-
-## Create a venv from system packages and install other packages
-```
-python3 -m venv --system-site-packages venv
-source venv/bin/activate
-pip3 install -r requirements.txt
+python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py
 ```
