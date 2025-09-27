@@ -35,7 +35,7 @@ class TurtleBotNavEnv(gym.Env):
         # Robot state: [distance_to_goal, angle_to_goal, prev_linear_vel, prev_angular_vel]
         self.observation_space = gym.spaces.Box(
             low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -3.0, -1.5])]),
-            high=np.concatenate([np.full(640, 10.0), np.array([20.0, np.pi, 3.0, 1.5])]),
+            high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 3.0, 1.5])]),
             dtype=np.float32
         )
 
@@ -68,8 +68,8 @@ class TurtleBotNavEnv(gym.Env):
     def scan_callback(self, msg):
         """Updates state with current scan data."""
         self.lidar_data = np.array(msg.ranges, dtype=np.float32)
-        # Replace inf values with the maximum LiDAR range (10.0m)
-        self.lidar_data[np.isinf(self.lidar_data)] = 10.0
+        # Replace inf values with the maximum LiDAR range (12.0m)
+        self.lidar_data[np.isinf(self.lidar_data)] = 12.0
 
     def odom_callback(self, msg):
         """Updates current position and orientation, applying odometry offsets if calibrated."""
