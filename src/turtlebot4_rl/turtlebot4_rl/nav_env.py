@@ -229,16 +229,25 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            return 100.0
+            return 100.0  # 到达目标的高奖励
         elif collision:
-            return -100.0
+            return -50.0  # 调整后的碰撞惩罚，降低惩罚强度
         else:
-            r3 = lambda x: 1 - x if x < 1 else 0.0
-            # 使用保存的上一个动作
-            # self.last_action[0] 是线速度，self.last_action[1] 是角速度
+            # 距离目标的奖励（越接近目标奖励越高）
+            distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+            distance_reward = max(0, 1 - distance_to_goal / 20.0)  # 归一化到 [0, 1]
+
+            # 激励机器人保持线速度并减少角速度
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
             angular_vel = self.last_action[1] if hasattr(self, 'last_action') else 0.0
-            return linear_vel / 2 - abs(angular_vel) / 2 - r3(min_laser) / 2
+            velocity_reward = linear_vel - abs(angular_vel) * 0.5
+
+            # 激励机器人远离障碍物
+            obstacle_penalty = max(0, 1 - min_laser / 2.0)  # 归一化到 [0, 1]
+
+            # 综合奖励
+            reward = distance_reward * 0.6 + velocity_reward * 0.3 - obstacle_penalty * 0.1
+            return reward
 
     def _is_collision(self):
         """Check if a collision has occurred based on LiDAR data."""

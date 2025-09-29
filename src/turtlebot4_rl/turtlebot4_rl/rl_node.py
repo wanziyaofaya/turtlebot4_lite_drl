@@ -54,20 +54,18 @@ class TensorboardCallback(BaseCallback):
         return True
 
 class TurtleBotRLNode(Node):
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, 
-                 num_tasks=1, min_distance=1.0):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=1.0):
         super().__init__('turtlebot_rl_node')
-        
+
         self.algorithm = algorithm.upper()
         self.timesteps = timesteps
         self.episodes = episodes
         self.model_path = model_path
-        self.num_tasks = num_tasks
         self.min_distance = min_distance
 
         # Map boundaries (based on the warehouse map)
         self.map_bounds = {'x_min': -9.5, 'x_max': 9.5, 'y_min': -9.5, 'y_max': 9.5}
-        
+
         self.model_dir = os.path.join('models', self.algorithm)
         os.makedirs(self.model_dir, exist_ok=True)
 
@@ -78,7 +76,7 @@ class TurtleBotRLNode(Node):
 
         self.metrics_file = os.path.join(self.model_dir, f"metrics_{timestamp}.txt")
         with open(self.metrics_file, 'w') as f:
-            f.write("Task_Start_X,Task_Start_Y,Task_Goal_X,Task_Goal_Y,Model_Path,Episode,Total_Reward\n")
+            f.write("Start_X,Start_Y,Goal_X,Goal_Y,Model_Path,Episode,Total_Reward\n")
 
         # Initialize environment with random positions
         start_pos, goal_pos = self._generate_random_positions()
@@ -87,8 +85,7 @@ class TurtleBotRLNode(Node):
         self.model = self._load_algorithm(self.algorithm, self.model_path)
 
         self.get_logger().info(
-            f"Algorithm: {self.algorithm}, Timesteps: {self.timesteps}, Episodes: {self.episodes}, "
-            f"Tasks: {self.num_tasks} (Random positions), Model Path: {self.model_path}"
+            f"Algorithm: {self.algorithm}, Timesteps: {self.timesteps}, Episodes: {self.episodes}, Model Path: {self.model_path}"
         )
         self.get_logger().info(f"Tensorboard logs will be saved to: {os.path.abspath(self.tensorboard_log)}")
         self.get_logger().info("To view training progress, run: tensorboard --logdir tensorboard_logs")
@@ -170,49 +167,37 @@ class TurtleBotRLNode(Node):
         return model
 
     def train_and_evaluate(self):
-        """Train the model on each position pair and evaluate."""
-        for task_idx in range(self.num_tasks):
-            self.get_logger().info(f"Starting Task {task_idx + 1}/{self.num_tasks}")
-            
-            # Train the model with random positions for each episode
-            self.get_logger().info(f"Training on Task {task_idx + 1} for {self.timesteps} timesteps with random positions.")
-            
-            # Override the environment's reset method to use random positions
-            original_reset = self.env.reset
-            def random_reset(*args, **kwargs):
-                start_pos, goal_pos = self._generate_random_positions()
-                return original_reset(start_position=start_pos, goal_position=goal_pos)
-            self.env.reset = random_reset
-            
-            # Create callback for Tensorboard logging
-            callback = TensorboardCallback(self.env, verbose=1)
-            
-            # Train the model with callback
-            self.model.learn(total_timesteps=self.timesteps, callback=callback, tb_log_name=f"task_{task_idx + 1}")
-            model_path = os.path.join(self.model_dir, f"model_task_{task_idx + 1}.zip")
-            self.model.save(model_path)
-            self.get_logger().info(f"Model saved to {model_path}.")
-            
-            # Restore original reset method
-            self.env.reset = original_reset
-            
-            # Evaluate the model with random positions
-            self.get_logger().info(f"Evaluating on Task {task_idx + 1} for {self.episodes} episodes with random positions.")
-            for episode in range(1, self.episodes + 1):
-                start, goal = self._generate_random_positions()
-                obs, _ = self.env.reset(start_position=start, goal_position=goal)
-                done = False
-                total_reward = 0.0
-                while not done:
-                    action, _states = self.model.predict(obs)
-                    obs, reward, done, truncated, info = self.env.step(action)
-                    total_reward += reward
-                self.get_logger().info(f"Task {task_idx + 1} - Episode {episode}: Total Reward: {total_reward}")
-                self.get_logger().info("")  # Empty line for separation
+        """Train the model and evaluate it."""
+        self.get_logger().info(f"Training for {self.timesteps} timesteps.")
 
-                # Log the metrics
-                with open(self.metrics_file, 'a') as f:
-                    f.write(f"{start[0]},{start[1]},{goal[0]},{goal[1]},{model_path},{episode},{total_reward}\n")
+        # Create callback for Tensorboard logging
+        callback = TensorboardCallback(self.env, verbose=1)
+
+        # Train the model with callback
+        self.model.learn(total_timesteps=self.timesteps, callback=callback, tb_log_name="training")
+        
+        # 添加时间戳到模型文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_path = os.path.join(self.model_dir, f"model_{timestamp}.zip")
+        self.model.save(model_path)
+        self.get_logger().info(f"Model saved to {model_path}.")
+
+        # Evaluate the model
+        self.get_logger().info(f"Evaluating for {self.episodes} episodes.")
+        for episode in range(1, self.episodes + 1):
+            start, goal = self._generate_random_positions()
+            obs, _ = self.env.reset(start_position=start, goal_position=goal)
+            done = False
+            total_reward = 0.0
+            while not done:
+                action, _states = self.model.predict(obs)
+                obs, reward, done, truncated, info = self.env.step(action)
+                total_reward += reward
+            self.get_logger().info(f"Episode {episode}: Total Reward: {total_reward}")
+
+            # Log the metrics
+            with open(self.metrics_file, 'a') as f:
+                f.write(f"{start[0]},{start[1]},{goal[0]},{goal[1]},{model_path},{episode},{total_reward}\n")
 
     def close(self):
         self.env.close()
@@ -221,26 +206,25 @@ class TurtleBotRLNode(Node):
         self.get_logger().info(f"tensorboard --logdir {os.path.abspath('tensorboard_logs')}")
         self.get_logger().info("Then open http://localhost:6006 in your browser")
 
+# Update the main function to remove task-related arguments
 def main(args=None):
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument('--algorithm', type=str, default='PPO', help='RL Algorithm to use (PPO, DQN, SAC)')
-    arg_parser.add_argument('--timesteps', type=int, default=1000, help='Number of timesteps to train per task')
-    arg_parser.add_argument('--episodes', type=int, default=5, help='Number of episodes to evaluate per task')
+    arg_parser.add_argument('--timesteps', type=int, default=10000, help='Number of timesteps to train')
+    arg_parser.add_argument('--episodes', type=int, default=10, help='Number of episodes to evaluate')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
-    arg_parser.add_argument('--num_tasks', type=int, default=1, help='Number of tasks to train with random positions')
     arg_parser.add_argument('--min_distance', type=float, default=2.0, help='Minimum distance between start and goal positions')
 
     parsed = arg_parser.parse_args(args=args)
 
     rclpy.init(args=args)
-    
+
     try:
         node = TurtleBotRLNode(
             algorithm=parsed.algorithm,
             timesteps=parsed.timesteps,
             episodes=parsed.episodes,
             model_path=parsed.model_path,
-            num_tasks=parsed.num_tasks,
             min_distance=parsed.min_distance
         )
         node.train_and_evaluate()
