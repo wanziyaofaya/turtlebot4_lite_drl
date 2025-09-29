@@ -251,7 +251,7 @@ class TurtleBotNavEnv(gym.Env):
 
     def _is_collision(self):
         """Check if a collision has occurred based on LiDAR data."""
-        collision_threshold = 0.5
+        collision_threshold = 0.3
         min_lidar = np.min(self.lidar_data) if self.lidar_data is not None else float('inf')
         collision = min_lidar < collision_threshold
         if collision:
