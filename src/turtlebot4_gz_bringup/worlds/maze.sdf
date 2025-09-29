@@ -423,29 +423,6 @@
                 </visual>
             </link>
 
-            <link name='wall11'>
-                <pose>-3 7.5 0 0 0 0</pose>
-                <static>true</static>
-                <collision name='wall11_collision'>
-                    <geometry>
-                        <box>
-                            <size>4 1 1</size>
-                        </box>
-                    </geometry>
-                </collision>
-                <visual name='wall11_visual'>
-                    <geometry>
-                        <box>
-                            <size>4 1 1</size>
-                        </box>
-                    </geometry>
-                    <material>
-                        <ambient>0.1 0.1 0.1 1</ambient>
-                        <diffuse>0 0.1 0.2 1</diffuse>
-                        <specular>0 0.01 0.05 1</specular>
-                    </material>
-                </visual>
-            </link>
             <link name='wall12'>
                 <pose>0 5.5 0 0 0 0</pose>
                 <static>true</static>
@@ -734,29 +711,6 @@
                 </visual>
             </link>
 
-            <link name='wall24'>
-                <pose>7.5 2 0 0 0 0</pose>
-                <static>true</static>
-                <collision name='wall24_collision'>
-                    <geometry>
-                        <box>
-                            <size>1 2 1</size>
-                        </box>
-                    </geometry>
-                </collision>
-                <visual name='wall24_visual'>
-                    <geometry>
-                        <box>
-                            <size>1 2 1</size>
-                        </box>
-                    </geometry>
-                    <material>
-                        <ambient>0.1 0.1 0.1 1</ambient>
-                        <diffuse>0 0.1 0.2 1</diffuse>
-                        <specular>0 0.01 0.05 1</specular>
-                    </material>
-                </visual>
-            </link>
 
             <link name='wall25'>
                 <pose>1.5 5.5 0 0 0 0</pose>

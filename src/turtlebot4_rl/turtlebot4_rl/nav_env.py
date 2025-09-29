@@ -14,7 +14,7 @@ import math
 import tf_transformations
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.5  # 目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.35  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, start_position, goal_position, max_wait_for_observation=5.0):

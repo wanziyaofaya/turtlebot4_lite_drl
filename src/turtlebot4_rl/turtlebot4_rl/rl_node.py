@@ -16,41 +16,38 @@ import torch
 import random
 
 class TensorboardCallback(BaseCallback):
-    """Custom callback for logging additional metrics to Tensorboard."""
-    
+    """Custom callback for logging all episode metrics to Tensorboard."""
+
     def __init__(self, env, verbose=0):
         super().__init__(verbose)
         self.env = env
         self.episode_rewards = []
         self.episode_lengths = []
-        self.current_episode_reward = 0
-        self.current_episode_length = 0
-        
+        self.total_rewards = 0
+        self.total_lengths = 0
+        self.episode_count = 0
+
     def _on_step(self) -> bool:
-        # Track episode statistics
-        self.current_episode_reward += self.locals['rewards'][0]
-        self.current_episode_length += 1
-        
         # Check if episode is done
         if self.locals['dones'][0]:
-            self.episode_rewards.append(self.current_episode_reward)
-            self.episode_lengths.append(self.current_episode_length)
-            
-            # Log to tensorboard
-            self.logger.record('episode/reward', self.current_episode_reward)
-            self.logger.record('episode/length', self.current_episode_length)
-            
-            # Calculate running averages
-            if len(self.episode_rewards) >= 10:
-                avg_reward = np.mean(self.episode_rewards[-10:])
-                avg_length = np.mean(self.episode_lengths[-10:])
-                self.logger.record('episode/reward_avg_10', avg_reward)
-                self.logger.record('episode/length_avg_10', avg_length)
-                
-            # Reset counters
-            self.current_episode_reward = 0
-            self.current_episode_length = 0
-            
+            # Track episode statistics
+            current_episode_reward = sum(self.locals['rewards'])
+            current_episode_length = len(self.locals['rewards'])
+
+            self.episode_rewards.append(current_episode_reward)
+            self.episode_lengths.append(current_episode_length)
+
+            # Update global statistics
+            self.total_rewards += current_episode_reward
+            self.total_lengths += current_episode_length
+            self.episode_count += 1
+
+            # Calculate and log global averages
+            avg_reward_all = self.total_rewards / self.episode_count
+            avg_length_all = self.total_lengths / self.episode_count
+            self.logger.record('episode/reward_avg_all', avg_reward_all)
+            self.logger.record('episode/length_avg_all', avg_length_all)
+
         return True
 
 class TurtleBotRLNode(Node):
