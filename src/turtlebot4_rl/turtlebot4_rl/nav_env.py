@@ -16,7 +16,6 @@ import tf_transformations
 # Constants
 GOAL_REACH_THRESHOLD = 0.5  # 目标到达阈值（米）
 
-
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, start_position, goal_position, max_wait_for_observation=5.0):
         super().__init__()
@@ -99,7 +98,7 @@ class TurtleBotNavEnv(gym.Env):
             self.yaw_offset = desired_yaw - odom_yaw
 
             self.odom_calibrated = True
-            self._print_and_log(f"Odometry calibrated. Position offset: {self.odom_position_offset}, Orientation offset: {self.yaw_offset:.2f} radians.")
+            # self._print_and_log(f"Odometry calibrated. Position offset: {self.odom_position_offset}, Orientation offset: {self.yaw_offset:.2f} radians.")
 
             # Reset current position and yaw to start position and desired yaw (facing downwards)
             self.current_position = np.copy(self.start_position)
@@ -128,6 +127,9 @@ class TurtleBotNavEnv(gym.Env):
             self.start_position = np.array(start_position, dtype=np.float32)
         if goal_position is not None:
             self.goal_position = np.array(goal_position, dtype=np.float32)
+
+        # Print start and goal positions for this episode
+        self._print_and_log(f"Episode starting - Start position: [{self.start_position[0]:.2f}, {self.start_position[1]:.2f}], Goal position: [{self.goal_position[0]:.2f}, {self.goal_position[1]:.2f}]")
 
         super().reset(seed=seed)
 
@@ -176,7 +178,7 @@ class TurtleBotNavEnv(gym.Env):
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
 
-        self._print_and_log(f"Action received: {action}")
+        # self._print_and_log(f"Action received: {action}")
 
         linear, angular = action
         msg.twist.linear.x = float(linear)
@@ -296,7 +298,7 @@ class TurtleBotNavEnv(gym.Env):
         self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
         self.yaw_offset = 0.0
 
-        self._print_and_log("Calibrating odometry offsets...")
+        # self._print_and_log("Calibrating odometry offsets...")
 
         start_time = time.time()
         timeout = 5.0  # seconds
