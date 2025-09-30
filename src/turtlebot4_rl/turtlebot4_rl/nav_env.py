@@ -236,12 +236,13 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            return 100.0  # 到达目标的高奖励
+            return 1000.0  # 到达目标的高奖励
         elif collision:
-            return -100.0  
+            return -1000.0  
         else:
             # 每步惩罚
             step_penalty = -0.01
+
             # 距离目标的奖励（越接近目标奖励越高）
             distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
             if distance_to_goal < 2.0:
@@ -255,7 +256,7 @@ class TurtleBotNavEnv(gym.Env):
             velocity_reward = linear_vel - abs(angular_vel) * 0.5
 
             # 激励机器人远离障碍物
-            obstacle_penalty = max(0, 1 - min_laser / 2.0) * 0.5
+            obstacle_penalty = max(0, 1 - min_laser * 2.0) * 0.5
 
             # 综合奖励
             reward = step_penalty + distance_reward  + velocity_reward  - obstacle_penalty 
