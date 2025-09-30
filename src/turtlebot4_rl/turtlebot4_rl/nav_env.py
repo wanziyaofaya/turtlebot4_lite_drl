@@ -170,7 +170,14 @@ class TurtleBotNavEnv(gym.Env):
         # Calculate reward
         reward = self._calculate_reward(target, collision, min_lidar)
 
-        return self._get_state(), reward, done, False, {}
+        # 构造info字典，标记成功或碰撞
+        info = {}
+        if target:
+            info['is_success'] = True
+        elif collision:
+            info['is_collision'] = True
+
+        return self._get_state(), reward, done, False, info
 
     def _take_action(self, action):
         """Send velocity command to the robot."""
@@ -231,11 +238,16 @@ class TurtleBotNavEnv(gym.Env):
         if target:
             return 100.0  # 到达目标的高奖励
         elif collision:
-            return -50.0  # 调整后的碰撞惩罚，降低惩罚强度
+            return -100.0  
         else:
+            # 每步惩罚
+            step_penalty = -0.01
             # 距离目标的奖励（越接近目标奖励越高）
             distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-            distance_reward = max(0, 1 - distance_to_goal / 20.0)  # 归一化到 [0, 1]
+            if distance_to_goal < 2.0:
+                distance_reward = max(0, 1 - distance_to_goal / 2.0) * 2  # 归一化到 [0,2]
+            else:
+                distance_reward = 0.0
 
             # 激励机器人保持线速度并减少角速度
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
@@ -243,10 +255,10 @@ class TurtleBotNavEnv(gym.Env):
             velocity_reward = linear_vel - abs(angular_vel) * 0.5
 
             # 激励机器人远离障碍物
-            obstacle_penalty = max(0, 1 - min_laser / 2.0)  # 归一化到 [0, 1]
+            obstacle_penalty = max(0, 1 - min_laser / 2.0) * 0.5
 
             # 综合奖励
-            reward = distance_reward * 0.6 + velocity_reward * 0.3 - obstacle_penalty * 0.1
+            reward = step_penalty + distance_reward  + velocity_reward  - obstacle_penalty 
             return reward
 
     def _is_collision(self):

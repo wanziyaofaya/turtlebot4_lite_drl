@@ -14,6 +14,7 @@ import csv
 from datetime import datetime
 import torch
 import random
+from torch.utils.tensorboard import SummaryWriter
 
 class TensorboardCallback(BaseCallback):
     """Custom callback for logging all episode metrics to Tensorboard."""
@@ -51,7 +52,7 @@ class TensorboardCallback(BaseCallback):
         return True
 
 class TurtleBotRLNode(Node):
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=1.0):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=1.0, eval_episodes=10):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -59,6 +60,7 @@ class TurtleBotRLNode(Node):
         self.episodes = episodes
         self.model_path = model_path
         self.min_distance = min_distance
+        self.eval_episodes = eval_episodes
 
         # Map boundaries (based on the warehouse map)
         self.map_bounds = {'x_min': -9.5, 'x_max': 9.5, 'y_min': -9.5, 'y_max': 9.5}
@@ -70,6 +72,7 @@ class TurtleBotRLNode(Node):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.tensorboard_log = os.path.join('tensorboard_logs', self.algorithm, timestamp)
         os.makedirs(self.tensorboard_log, exist_ok=True)
+        self.tb_writer = SummaryWriter(self.tensorboard_log)
 
         self.metrics_file = os.path.join(self.model_dir, f"metrics_{timestamp}.txt")
         with open(self.metrics_file, 'w') as f:
@@ -165,37 +168,93 @@ class TurtleBotRLNode(Node):
 
 
     def train_and_evaluate(self):
-        """Train the model and evaluate it."""
-        self.get_logger().info(f"Training for {self.timesteps} timesteps.")
+        num_games = self.episodes 
+        max_steps = self.timesteps 
+        self.get_logger().info(f"Training for {num_games} games, each up to {max_steps} timesteps.")
 
-        # Create callback for Tensorboard logging
-        callback = TensorboardCallback(self.env, verbose=1)
+        episode_rewards = []
+        episode_steps = []
+        train_success_count = 0
+        train_collision_count = 0
+        train_timeout_count = 0
+        for game in range(1, num_games + 1):
+            start, goal = self._generate_random_positions()
+            obs, _ = self.env.reset(start_position=start, goal_position=goal)
+            done = False
+            total_reward = 0.0
+            step_count = 0
+            result = None
+            while not done and step_count < max_steps:
+                action, _states = self.model.predict(obs)
+                obs, reward, done, truncated, info = self.env.step(action)
+                total_reward += reward
+                step_count += 1
+                # 判断是否到达目标或碰撞
+                if info.get('is_success', False):
+                    result = 'success'
+                    done = True
+                elif info.get('is_collision', False):
+                    result = 'collision'
+                    done = True
+            # 超时：步数耗尽且未碰撞未到达目标
+            if result is None:
+                result = 'timeout'
 
-        # Train the model with callback
-        self.model.learn(total_timesteps=self.timesteps, callback=callback, tb_log_name="training")
-        
-        # 添加时间戳到模型文件名
+            # 统计
+            if result == 'success':
+                train_success_count += 1
+            elif result == 'collision':
+                train_collision_count += 1
+            elif result == 'timeout':
+                train_timeout_count += 1
+
+            # 计算当前比例
+            train_success_rate = train_success_count / game
+            train_collision_rate = train_collision_count / game
+            train_timeout_rate = train_timeout_count / game
+
+            # Tensorboard写入
+            self.tb_writer.add_scalar('custom/success_rate', train_success_rate, game)
+            self.tb_writer.add_scalar('custom/collision_rate', train_collision_rate, game)
+            self.tb_writer.add_scalar('custom/timeout_rate', train_timeout_rate, game)
+
+            self.get_logger().info(f"Game {game}: Total Reward: {total_reward}, Steps: {step_count}, Result: {result}")
+            episode_rewards.append(total_reward)
+            episode_steps.append(step_count)
+            with open(self.metrics_file, 'a') as f:
+                f.write(f"{start[0]},{start[1]},{goal[0]},{goal[1]},-,{game},{total_reward},{result}\n")
+
+            # 每100个episode记录一次平均值，并写入Tensorboard（以episode为横坐标）
+            if game % 100 == 0:
+                avg_reward = np.mean(episode_rewards)
+                avg_steps = np.mean(episode_steps)
+                with open(self.metrics_file, 'a') as f:
+                    f.write(f"SUMMARY,{game},{avg_steps},{avg_reward}\n")
+                self.tb_writer.add_scalar('custom/avg_reward', avg_reward, game)
+                self.tb_writer.add_scalar('custom/avg_steps', avg_steps, game)
+        self.tb_writer.close()
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_path = os.path.join(self.model_dir, f"model_{timestamp}.zip")
         self.model.save(model_path)
         self.get_logger().info(f"Model saved to {model_path}.")
 
-        # Evaluate the model
-        self.get_logger().info(f"Evaluating for {self.episodes} episodes.")
-        for episode in range(1, self.episodes + 1):
+        # 评估模型
+        self.get_logger().info(f"Evaluating model for {self.eval_episodes} episodes...")
+        for episode in range(1, self.eval_episodes + 1):
             start, goal = self._generate_random_positions()
             obs, _ = self.env.reset(start_position=start, goal_position=goal)
             done = False
             total_reward = 0.0
-            while not done:
+            step_count = 0
+            while not done and step_count < max_steps:
                 action, _states = self.model.predict(obs)
                 obs, reward, done, truncated, info = self.env.step(action)
                 total_reward += reward
-            self.get_logger().info(f"Episode {episode}: Total Reward: {total_reward}")
-
-            # Log the metrics
+                step_count += 1
+            self.get_logger().info(f"Eval Episode {episode}: Total Reward: {total_reward}, Steps: {step_count}")
             with open(self.metrics_file, 'a') as f:
-                f.write(f"{start[0]},{start[1]},{goal[0]},{goal[1]},{model_path},{episode},{total_reward}\n")
+                f.write(f"EVAL,{start[0]},{start[1]},{goal[0]},{goal[1]},-,{episode},{total_reward}\n")
 
     def close(self):
         self.env.close()
@@ -209,9 +268,10 @@ def main(args=None):
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument('--algorithm', type=str, default='PPO', help='RL Algorithm to use (PPO, DQN, SAC)')
     arg_parser.add_argument('--timesteps', type=int, default=10000, help='Number of timesteps to train')
-    arg_parser.add_argument('--episodes', type=int, default=10, help='Number of episodes to evaluate')
+    arg_parser.add_argument('--episodes', type=int, default=10, help='Number of training games')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
     arg_parser.add_argument('--min_distance', type=float, default=2.0, help='Minimum distance between start and goal positions')
+    arg_parser.add_argument('--eval_episodes', type=int, default=10, help='Number of evaluation episodes after training')
 
     parsed = arg_parser.parse_args(args=args)
 
@@ -223,7 +283,8 @@ def main(args=None):
             timesteps=parsed.timesteps,
             episodes=parsed.episodes,
             model_path=parsed.model_path,
-            min_distance=parsed.min_distance
+            min_distance=parsed.min_distance,
+            eval_episodes=parsed.eval_episodes
         )
         node.train_and_evaluate()
         node.close()
