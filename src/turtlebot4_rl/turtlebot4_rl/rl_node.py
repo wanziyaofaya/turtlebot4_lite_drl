@@ -163,6 +163,7 @@ class TurtleBotRLNode(Node):
                 model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1, device='cpu', tensorboard_log=self.tensorboard_log)
         return model
 
+
     def train_and_evaluate(self):
         """Train the model and evaluate it."""
         self.get_logger().info(f"Training for {self.timesteps} timesteps.")
