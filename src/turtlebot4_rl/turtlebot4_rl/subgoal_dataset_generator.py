@@ -27,7 +27,7 @@ def generate_random_positions(map_bounds, min_distance=1.0):
     return np.array([0.0, 0.0], dtype=np.float32), np.array([5.0, 5.0], dtype=np.float32)
 
 
-def generate_subgoal_dataset(env, model_dir, num_samples=3000, output_file='subgoal_dataset.txt', min_distance=1.0):
+def generate_subgoal_dataset(env, model_dir, num_samples=3000, output_file='subgoal_dataset.txt', min_distance=2.0):
     """
     生成子目标点数据集，每条数据包括：起点、终点、子目标点、激光信息。
     """
