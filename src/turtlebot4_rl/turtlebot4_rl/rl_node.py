@@ -226,7 +226,7 @@ class TurtleBotRLNode(Node):
         self.model.save(model_path)
         self.get_logger().info(f"Model saved to {model_path}.")
 
-        # 评估模型
+        # 测试模型
         self.get_logger().info(f"Evaluating model for {self.eval_episodes} episodes...")
         for episode in range(1, self.eval_episodes + 1):
             start, goal = self._generate_random_positions()
