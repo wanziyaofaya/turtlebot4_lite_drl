@@ -16,7 +16,7 @@ import torch
 import random
 from torch.utils.tensorboard import SummaryWriter
 
-class TensorboardCallback(BaseCallback):
+class TurtleBotRLNode(Node):
     """Custom callback for logging all episode metrics to Tensorboard."""
 
     def __init__(self, env, verbose=0):
