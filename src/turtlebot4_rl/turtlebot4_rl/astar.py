@@ -1,42 +1,6 @@
 import heapq
 from collision import point_in_obstacle
 
-def line_cross_obstacle(p1, p2, resolution=0.01):
-    """
-    判断从p1到p2的连线是否穿过障碍物，采样间隔为resolution。
-    """
-    x1, y1 = p1
-    x2, y2 = p2
-    dist = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
-    steps = int(dist / resolution)
-    for i in range(1, steps):
-        t = i / steps
-        x = x1 + t * (x2 - x1)
-        y = y1 + t * (y2 - y1)
-        if point_in_obstacle(x, y):
-            return True
-    return False
-
-def remove_redundant_nodes(path, resolution=0.01):
-    """
-    删除路径上的冗余节点。
-    原则：如果第i点和第j点连线不穿过障碍物，则中间点都可以删除。
-    """
-    if not path or len(path) <= 2:
-        return path
-    new_path = [path[0]]
-    i = 0
-    while i < len(path) - 1:
-        # 最远能连到哪个点
-        j = i + 1
-        while j < len(path):
-            if line_cross_obstacle(path[i], path[j], resolution):
-                break
-            j += 1
-        # j-1是最后一个可以连的点
-        new_path.append(path[j-1])
-        i = j - 1
-    return new_path
 
 def astar(start, goal, resolution=0.01):
     """
@@ -50,10 +14,13 @@ def astar(start, goal, resolution=0.01):
 
     # 网格化坐标
     def to_grid(p):
-        return (round(p[0] / resolution), round(p[1] / resolution))
+        # 保证浮点精度，避免精度丢失
+        return (int(round(p[0] / resolution)), int(round(p[1] / resolution)))
     def from_grid(g):
-        return (g[0] * resolution, g[1] * resolution)
+        # 保证还原时精度不丢失
+        return (round(g[0] * resolution, 4), round(g[1] * resolution, 4))
 
+    # 若用户输入为高精度坐标，建议 resolution=0.0001
     start_g = to_grid(start)
     goal_g = to_grid(goal)
 
@@ -94,16 +61,13 @@ def astar(start, goal, resolution=0.01):
 
 # 示例用法
 if __name__ == "__main__":
-    start = (-9.0, 3.0)
-    goal = (-2.0, -1.0)
-    path = astar(start, goal)
+    # 示例：四位小数坐标
+    start = (-9.1234, 3.5678)
+    goal = (-2.4321, -1.8765)
+    path = astar(start, goal, resolution=0.0001)
     if path:
         print("A*原始路径:")
         for p in path:
-            print(p)
-        print("\nA*精简后路径:")
-        simple_path = remove_redundant_nodes(path)
-        for p in simple_path:
             print(p)
     else:
         print("无可行路径！")

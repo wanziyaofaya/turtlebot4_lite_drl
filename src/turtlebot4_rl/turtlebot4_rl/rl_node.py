@@ -51,8 +51,8 @@ class TensorboardCallback(BaseCallback):
 
         return True
 
-class TurtleBotRLNode(Node):
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=1.0, eval_episodes=10):
+
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2.0, eval_episodes=10):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -91,34 +91,22 @@ class TurtleBotRLNode(Node):
         self.get_logger().info("To view training progress, run: tensorboard --logdir tensorboard_logs")
 
     def _generate_random_positions(self):
-        """Generate random start and goal positions that are not in obstacles and meet distance requirements."""
+        """Generate random start and goal positions that are not in obstacles and meet distance requirements. 坐标保留两位小数"""
         max_attempts = 1000
-        
         for _ in range(max_attempts):
-            # Generate random start position
-            start_x = random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max'])
-            start_y = random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max'])
-            
-            # Check if start position is in obstacle
+            start_x = round(random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
+            start_y = round(random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
             if point_in_obstacle(start_x, start_y):
                 continue
-                
-            # Generate random goal position
-            goal_x = random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max'])
-            goal_y = random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max'])
-            
-            # Check if goal position is in obstacle
+            goal_x = round(random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
+            goal_y = round(random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
             if point_in_obstacle(goal_x, goal_y):
                 continue
-                
-            # Check if distance between start and goal meets minimum requirement
             distance = np.sqrt((goal_x - start_x)**2 + (goal_y - start_y)**2)
             if distance >= self.min_distance:
                 start_pos = np.array([start_x, start_y], dtype=np.float32)
                 goal_pos = np.array([goal_x, goal_y], dtype=np.float32)
                 return start_pos, goal_pos
-        
-        # If we can't find valid positions after max_attempts, use fallback positions
         self.get_logger().warning("Could not generate valid random positions, using fallback positions")
         return np.array([0.0, 0.0], dtype=np.float32), np.array([5.0, 5.0], dtype=np.float32)
 
@@ -200,7 +188,6 @@ class TurtleBotRLNode(Node):
             if result is None:
                 result = 'timeout'
 
-            # 统计
             if result == 'success':
                 train_success_count += 1
             elif result == 'collision':
@@ -226,10 +213,10 @@ class TurtleBotRLNode(Node):
 
             # 每100个episode记录一次平均值，并写入Tensorboard（以episode为横坐标）
             if game % 100 == 0:
-                avg_reward = np.mean(episode_rewards)
-                avg_steps = np.mean(episode_steps)
+                avg_reward = np.mean(episode_rewards[-100:])
+                avg_steps = np.mean(episode_steps[-100:])
                 with open(self.metrics_file, 'a') as f:
-                    f.write(f"SUMMARY,{game},{avg_steps},{avg_reward}\n")
+                    f.write(f"SUMMARY,{game-99}-{game},{avg_steps},{avg_reward}\n")
                 self.tb_writer.add_scalar('custom/avg_reward', avg_reward, game)
                 self.tb_writer.add_scalar('custom/avg_steps', avg_steps, game)
         self.tb_writer.close()
@@ -286,6 +273,7 @@ def main(args=None):
             min_distance=parsed.min_distance,
             eval_episodes=parsed.eval_episodes
         )
+        # 只进行训练和评估
         node.train_and_evaluate()
         node.close()
     except Exception as e:
