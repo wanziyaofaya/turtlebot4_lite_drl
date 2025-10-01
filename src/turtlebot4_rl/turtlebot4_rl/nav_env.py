@@ -236,9 +236,9 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            return 1000.0  # 到达目标的高奖励
+            return 2000.0  
         elif collision:
-            return -1000.0  
+            return -5000.0  
         else:
             # 每步惩罚
             step_penalty = -0.01
@@ -264,11 +264,11 @@ class TurtleBotNavEnv(gym.Env):
 
     def _is_collision(self):
         """Check if a collision has occurred based on LiDAR data."""
-        collision_threshold = 0.3
+        collision_threshold = 0.2
         min_lidar = np.min(self.lidar_data) if self.lidar_data is not None else float('inf')
         collision = min_lidar < collision_threshold
         if collision:
-            self._print_and_log("Collision detected!")
+            self._print_and_log(f"Collision detected! min_lidar={min_lidar:.4f}")
         return collision, collision, min_lidar
 
     def _wait_for_new_state(self):
