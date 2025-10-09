@@ -45,6 +45,5 @@ export GAZEBO_PLUGIN_PATH=/opt/ros/jazzy/lib
 ## Run code
 ```
 ros2 launch turtlebot4_gz_bringup turtlebot4_gz.launch.py model:=lite world:=maze
-python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 100000 --episodes 15    214906  232801
 python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 10000 --episodes 2000 --eval_episodes 10
 ```

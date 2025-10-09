@@ -160,11 +160,10 @@ class TurtleBotRLNode(Node):
         max_steps = self.timesteps 
         self.get_logger().info(f"Training for {num_games} games, each up to {max_steps} timesteps.")
 
+
         episode_rewards = []
         episode_steps = []
-        train_success_count = 0
-        train_collision_count = 0
-        train_timeout_count = 0
+        batch_results = []  # 存储当前100回合的结果
         for game in range(1, num_games + 1):
             start, goal = self._generate_random_positions()
             obs, _ = self.env.reset(start_position=start, goal_position=goal)
@@ -188,22 +187,7 @@ class TurtleBotRLNode(Node):
             if result is None:
                 result = 'timeout'
 
-            if result == 'success':
-                train_success_count += 1
-            elif result == 'collision':
-                train_collision_count += 1
-            elif result == 'timeout':
-                train_timeout_count += 1
-
-            # 计算当前比例
-            train_success_rate = train_success_count / game
-            train_collision_rate = train_collision_count / game
-            train_timeout_rate = train_timeout_count / game
-
-            # Tensorboard写入
-            self.tb_writer.add_scalar('custom/success_rate', train_success_rate, game)
-            self.tb_writer.add_scalar('custom/collision_rate', train_collision_rate, game)
-            self.tb_writer.add_scalar('custom/timeout_rate', train_timeout_rate, game)
+            batch_results.append(result)
 
             self.get_logger().info(f"Game {game}: Total Reward: {total_reward}, Steps: {step_count}, Result: {result}")
             episode_rewards.append(total_reward)
@@ -211,14 +195,32 @@ class TurtleBotRLNode(Node):
             with open(self.metrics_file, 'a') as f:
                 f.write(f"{start[0]},{start[1]},{goal[0]},{goal[1]},-,{game},{total_reward},{result}\n")
 
-            # 每100个episode记录一次平均值，并写入Tensorboard（以episode为横坐标）
+            # 每100个episode记录一次平均值和成功率等，并写入Tensorboard（以episode为横坐标）
             if game % 100 == 0:
                 avg_reward = np.mean(episode_rewards[-100:])
                 avg_steps = np.mean(episode_steps[-100:])
+                # 统计本100回合的成功率、碰撞率、超时率
+                batch_success = batch_results.count('success')
+                batch_collision = batch_results.count('collision')
+                batch_timeout = batch_results.count('timeout')
+                batch_total = len(batch_results)
+                batch_success_rate = batch_success / batch_total if batch_total > 0 else 0.0
+                batch_collision_rate = batch_collision / batch_total if batch_total > 0 else 0.0
+                batch_timeout_rate = batch_timeout / batch_total if batch_total > 0 else 0.0
                 with open(self.metrics_file, 'a') as f:
-                    f.write(f"SUMMARY,{game-99}-{game},{avg_steps},{avg_reward}\n")
+                    f.write(f"SUMMARY,{game-99}-{game},{avg_steps},{avg_reward},{batch_success_rate},{batch_collision_rate},{batch_timeout_rate}\n")
                 self.tb_writer.add_scalar('custom/avg_reward', avg_reward, game)
                 self.tb_writer.add_scalar('custom/avg_steps', avg_steps, game)
+                self.tb_writer.add_scalar('custom/success_rate', batch_success_rate, game)
+                self.tb_writer.add_scalar('custom/collision_rate', batch_collision_rate, game)
+                self.tb_writer.add_scalar('custom/timeout_rate', batch_timeout_rate, game)
+                batch_results = []  # 清空，准备下一个100回合
+
+            # 每1000个episode保存一次模型
+            if game % 1000 == 0:
+                model_save_path = os.path.join(self.model_dir, f"model_{game-999}-{game}.zip")
+                self.model.save(model_save_path)
+                self.get_logger().info(f"Model checkpoint saved to {model_save_path}.")
         self.tb_writer.close()
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
