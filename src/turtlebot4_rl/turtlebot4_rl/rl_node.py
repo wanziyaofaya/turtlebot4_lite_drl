@@ -134,6 +134,7 @@ class TurtleBotRLNode(Node):
                     "MlpPolicy", 
                     self.env, 
                     verbose=1,
+                    device='cuda',
                     tensorboard_log=self.tensorboard_log,  # 添加Tensorboard日志
                     learning_rate=1e-4,  # 降低学习率
                     n_steps=2048,  # 减少步数
