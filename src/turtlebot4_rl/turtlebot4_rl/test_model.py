@@ -2,7 +2,7 @@ import os
 import numpy as np
 from stable_baselines3 import PPO, DQN, SAC
 from turtlebot4_rl.nav_env import TurtleBotNavEnv
-from turtlebot4_rl.collision import point_in_obstacle
+from turtlebot4_rl.collision import is_spawn_position_valid
 
 def test_model(model_path, algorithm='PPO', episodes=10, min_distance=1.0):
     """
@@ -35,12 +35,12 @@ def test_model(model_path, algorithm='PPO', episodes=10, min_distance=1.0):
         for _ in range(1000):
             start_x = np.random.uniform(map_bounds['x_min'], map_bounds['x_max'])
             start_y = np.random.uniform(map_bounds['y_min'], map_bounds['y_max'])
-            if point_in_obstacle(start_x, start_y):
+            if not is_spawn_position_valid(start_x, start_y, bounds=map_bounds):
                 continue
 
             goal_x = np.random.uniform(map_bounds['x_min'], map_bounds['x_max'])
             goal_y = np.random.uniform(map_bounds['y_min'], map_bounds['y_max'])
-            if point_in_obstacle(goal_x, goal_y):
+            if not is_spawn_position_valid(goal_x, goal_y, bounds=map_bounds):
                 continue
 
             distance = np.sqrt((goal_x - start_x)**2 + (goal_y - start_y)**2)

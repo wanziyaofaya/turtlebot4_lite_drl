@@ -3,7 +3,7 @@
 import os
 import numpy as np
 import random
-from turtlebot4_rl.collision import point_in_obstacle
+from turtlebot4_rl.collision import is_spawn_position_valid
 from datetime import datetime
 
 def generate_random_positions(map_bounds, min_distance=1.0):
@@ -12,11 +12,11 @@ def generate_random_positions(map_bounds, min_distance=1.0):
     for _ in range(max_attempts):
         start_x = round(random.uniform(map_bounds['x_min'], map_bounds['x_max']), 2)
         start_y = round(random.uniform(map_bounds['y_min'], map_bounds['y_max']), 2)
-        if point_in_obstacle(start_x, start_y):
+        if not is_spawn_position_valid(start_x, start_y, bounds=map_bounds):
             continue
         goal_x = round(random.uniform(map_bounds['x_min'], map_bounds['x_max']), 2)
         goal_y = round(random.uniform(map_bounds['y_min'], map_bounds['y_max']), 2)
-        if point_in_obstacle(goal_x, goal_y):
+        if not is_spawn_position_valid(goal_x, goal_y, bounds=map_bounds):
             continue
         distance = np.sqrt((goal_x - start_x)**2 + (goal_y - start_y)**2)
         if distance >= min_distance:

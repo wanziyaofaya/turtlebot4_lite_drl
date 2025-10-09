@@ -3,7 +3,7 @@
 import rclpy
 from rclpy.node import Node
 from turtlebot4_rl.nav_env import TurtleBotNavEnv
-from turtlebot4_rl.collision import point_in_obstacle
+from turtlebot4_rl.collision import is_spawn_position_valid
 from stable_baselines3 import PPO, DQN, SAC
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import configure
@@ -96,11 +96,11 @@ class TurtleBotRLNode(Node):
         for _ in range(max_attempts):
             start_x = round(random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
             start_y = round(random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
-            if point_in_obstacle(start_x, start_y):
+            if not is_spawn_position_valid(start_x, start_y, bounds=self.map_bounds):
                 continue
             goal_x = round(random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
             goal_y = round(random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
-            if point_in_obstacle(goal_x, goal_y):
+            if not is_spawn_position_valid(goal_x, goal_y, bounds=self.map_bounds):
                 continue
             distance = np.sqrt((goal_x - start_x)**2 + (goal_y - start_y)**2)
             if distance >= self.min_distance:
