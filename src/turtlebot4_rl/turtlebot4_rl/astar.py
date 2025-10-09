@@ -59,15 +59,4 @@ def astar(start, goal, resolution=0.01):
             heapq.heappush(open_set, (priority, cost_so_far[neighbor], neighbor, current))
     return None  # 无路径可达
 
-# 示例用法
-if __name__ == "__main__":
-    # 示例：四位小数坐标
-    start = (-9.1234, 3.5678)
-    goal = (-2.4321, -1.8765)
-    path = astar(start, goal, resolution=0.0001)
-    if path:
-        print("A*原始路径:")
-        for p in path:
-            print(p)
-    else:
-        print("无可行路径！")
+

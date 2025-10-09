@@ -17,7 +17,7 @@ import tf_transformations
 GOAL_REACH_THRESHOLD = 0.5  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, start_position, goal_position, max_wait_for_observation=5.0):
+    def __init__(self, start_position, goal_position, max_wait_for_observation=15.0):
         super().__init__()
 
         if not rclpy.ok():
@@ -277,10 +277,14 @@ class TurtleBotNavEnv(gym.Env):
         Return True if new state is received, False otherwise.
         """
         start_time = time.time()
-        initial_state = self.lidar_data
-        while (self.lidar_data is initial_state) and (time.time() - start_time < self.max_wait_for_observation):
+        initial_id = id(self.lidar_data)
+        while (id(self.lidar_data) == initial_id) and (time.time() - start_time < self.max_wait_for_observation):
             rclpy.spin_once(self.node, timeout_sec=0.1)
-        return self.lidar_data is not initial_state
+        if id(self.lidar_data) == initial_id:
+            self._print_and_log("LiDAR data did not update in time.")
+            return False
+        else:
+            return True
 
     def _reset_robot_position(self):
         """

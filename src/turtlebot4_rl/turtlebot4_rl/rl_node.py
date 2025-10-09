@@ -135,23 +135,23 @@ class TurtleBotRLNode(Node):
                     self.env, 
                     verbose=1,
                     tensorboard_log=self.tensorboard_log,  # 添加Tensorboard日志
-                    learning_rate=3e-4,  # 降低学习率
+                    learning_rate=1e-4,  # 降低学习率
                     n_steps=2048,  # 减少步数
-                    batch_size=64,  # 减少批次大小
-                    n_epochs=10,
+                    batch_size=128,  # 减少批次大小
+                    n_epochs=5,
                     gamma=0.99,
                     gae_lambda=0.95,
                     clip_range=0.2,
-                    ent_coef=0.0,
+                    ent_coef=0.01,
                     vf_coef=0.5,
                     max_grad_norm=0.5,  # 添加梯度裁剪
                     policy_kwargs=dict(
-                        net_arch=[dict(pi=[64, 64], vf=[64, 64])],
+                        net_arch=[dict(pi=[128, 128], vf=[128, 128])],
                         activation_fn=torch.nn.Tanh
                     )
                 )
             else:
-                model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1, device='cpu', tensorboard_log=self.tensorboard_log)
+                model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1, device='cuda', tensorboard_log=self.tensorboard_log)
         return model
 
 
