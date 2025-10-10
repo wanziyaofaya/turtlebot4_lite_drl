@@ -1,13 +1,14 @@
 # A DRL framework for turtlebot4-lite
 ## Install wsl-ubuntu24.04
 ```
-wsl install Ubuntu-24.04
+wsl --install Ubuntu-24.04
 ```
 ## Install ros2-jazzy
 ```
 wget http://fishros.com/install -O fishros && bash fishros
+source ~/.bashrc
 ```
-## Install turtlebot4 plugin && Install python3-gz and tf-transformations
+## Install turtlebot4 plugin && Install python3-gz and tf-transformations && uv
 ```
 sudo apt install ros-jazzy-turtlebot4-simulator ros-jazzy-irobot-create-nodes
 sudo apt install ros-dev-tools
@@ -26,12 +27,14 @@ sudo apt update
 sudo apt install libgz-transport14-dev python3-gz-transport14
 sudo apt install libgz-msgs11-dev python3-gz-msgs11
 sudo apt install ros-${ROS_DISTRO}-tf-transformations
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
 ```
 ## Create a venv from system packages and install other packages
 ```
-python3 -m venv --system-site-packages venv
-source venv/bin/activate
-pip3 install -r requirements.txt
+uv venv --system-site-packages
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
 ## Compile and build your workspace
 ```
@@ -45,5 +48,5 @@ export GAZEBO_PLUGIN_PATH=/opt/ros/jazzy/lib
 ## Run code
 ```
 ros2 launch turtlebot4_gz_bringup turtlebot4_gz.launch.py model:=lite world:=maze
-python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 5000 --episodes 2000 --eval_episodes 10
+python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 10000 --episodes 5000 --eval_episodes 10
 ```
