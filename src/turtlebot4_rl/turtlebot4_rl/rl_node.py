@@ -22,37 +22,8 @@ class TurtleBotRLNode(Node):
     def __init__(self, env, verbose=0):
         super().__init__(verbose)
         self.env = env
-        self.episode_rewards = []
-        self.episode_lengths = []
-        self.total_rewards = 0
-        self.total_lengths = 0
-        self.episode_count = 0
 
-    def _on_step(self) -> bool:
-        # Check if episode is done
-        if self.locals['dones'][0]:
-            # Track episode statistics
-            current_episode_reward = sum(self.locals['rewards'])
-            current_episode_length = len(self.locals['rewards'])
-
-            self.episode_rewards.append(current_episode_reward)
-            self.episode_lengths.append(current_episode_length)
-
-            # Update global statistics
-            self.total_rewards += current_episode_reward
-            self.total_lengths += current_episode_length
-            self.episode_count += 1
-
-            # Calculate and log global averages
-            avg_reward_all = self.total_rewards / self.episode_count
-            avg_length_all = self.total_lengths / self.episode_count
-            self.logger.record('episode/reward_avg_all', avg_reward_all)
-            self.logger.record('episode/length_avg_all', avg_length_all)
-
-        return True
-
-
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2.0, eval_episodes=10):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2.0):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -60,7 +31,6 @@ class TurtleBotRLNode(Node):
         self.episodes = episodes
         self.model_path = model_path
         self.min_distance = min_distance
-        self.eval_episodes = eval_episodes
 
         # Map boundaries (based on the warehouse map)
         self.map_bounds = {'x_min': -9.5, 'x_max': 9.5, 'y_min': -9.5, 'y_max': 9.5}
@@ -155,96 +125,30 @@ class TurtleBotRLNode(Node):
                 model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1, device='cuda', tensorboard_log=self.tensorboard_log)
         return model
 
-
     def train_and_evaluate(self):
         num_games = self.episodes 
         max_steps = self.timesteps 
         self.get_logger().info(f"Training for {num_games} games, each up to {max_steps} timesteps.")
-
-
-        episode_rewards = []
-        episode_steps = []
-        batch_results = []  # 存储当前100回合的结果
+        
         for game in range(1, num_games + 1):
+            # 生成新的起点和目标点
             start, goal = self._generate_random_positions()
-            obs, _ = self.env.reset(start_position=start, goal_position=goal)
-            done = False
-            total_reward = 0.0
-            step_count = 0
-            result = None
-            while not done and step_count < max_steps:
-                action, _states = self.model.predict(obs)
-                obs, reward, done, truncated, info = self.env.step(action)
-                total_reward += reward
-                step_count += 1
-                # 判断是否到达目标或碰撞
-                if info.get('is_success', False):
-                    result = 'success'
-                    done = True
-                elif info.get('is_collision', False):
-                    result = 'collision'
-                    done = True
-            # 超时：步数耗尽且未碰撞未到达目标
-            if result is None:
-                result = 'timeout'
+            self.env.reset(start_position=start, goal_position=goal)
+            
+            # 使用model.learn()进行训练，而不是手动循环
+            self.get_logger().info(f"Game {game}: Training for {max_steps} timesteps...")
+            self.model.learn(total_timesteps=max_steps, reset_num_timesteps=False)
 
-            batch_results.append(result)
-
-            self.get_logger().info(f"Game {game}: Total Reward: {total_reward}, Steps: {step_count}, Result: {result}")
-            episode_rewards.append(total_reward)
-            episode_steps.append(step_count)
-            with open(self.metrics_file, 'a') as f:
-                f.write(f"{start[0]},{start[1]},{goal[0]},{goal[1]},-,{game},{total_reward},{result}\n")
-
-            # 每100个episode记录一次平均值和成功率等，并写入Tensorboard（以episode为横坐标）
+            # 每100个episode保存一次模型
             if game % 100 == 0:
-                avg_reward = np.mean(episode_rewards[-100:])
-                avg_steps = np.mean(episode_steps[-100:])
-                # 统计本100回合的成功率、碰撞率、超时率
-                batch_success = batch_results.count('success')
-                batch_collision = batch_results.count('collision')
-                batch_timeout = batch_results.count('timeout')
-                batch_total = len(batch_results)
-                batch_success_rate = batch_success / batch_total if batch_total > 0 else 0.0
-                batch_collision_rate = batch_collision / batch_total if batch_total > 0 else 0.0
-                batch_timeout_rate = batch_timeout / batch_total if batch_total > 0 else 0.0
-                with open(self.metrics_file, 'a') as f:
-                    f.write(f"SUMMARY,{game-99}-{game},{avg_steps},{avg_reward},{batch_success_rate},{batch_collision_rate},{batch_timeout_rate}\n")
-                self.tb_writer.add_scalar('custom/avg_reward', avg_reward, game)
-                self.tb_writer.add_scalar('custom/avg_steps', avg_steps, game)
-                self.tb_writer.add_scalar('custom/success_rate', batch_success_rate, game)
-                self.tb_writer.add_scalar('custom/collision_rate', batch_collision_rate, game)
-                self.tb_writer.add_scalar('custom/timeout_rate', batch_timeout_rate, game)
-                batch_results = []  # 清空，准备下一个100回合
-
-            # 每1000个episode保存一次模型
-            if game % 1000 == 0:
-                model_save_path = os.path.join(self.model_dir, f"model_{game-999}-{game}.zip")
+                model_save_path = os.path.join(self.model_dir, f"model_{game-99}-{game}.zip")
                 self.model.save(model_save_path)
                 self.get_logger().info(f"Model checkpoint saved to {model_save_path}.")
-        self.tb_writer.close()
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_path = os.path.join(self.model_dir, f"model_{timestamp}.zip")
         self.model.save(model_path)
         self.get_logger().info(f"Model saved to {model_path}.")
-
-        # 测试模型
-        self.get_logger().info(f"Evaluating model for {self.eval_episodes} episodes...")
-        for episode in range(1, self.eval_episodes + 1):
-            start, goal = self._generate_random_positions()
-            obs, _ = self.env.reset(start_position=start, goal_position=goal)
-            done = False
-            total_reward = 0.0
-            step_count = 0
-            while not done and step_count < max_steps:
-                action, _states = self.model.predict(obs)
-                obs, reward, done, truncated, info = self.env.step(action)
-                total_reward += reward
-                step_count += 1
-            self.get_logger().info(f"Eval Episode {episode}: Total Reward: {total_reward}, Steps: {step_count}")
-            with open(self.metrics_file, 'a') as f:
-                f.write(f"EVAL,{start[0]},{start[1]},{goal[0]},{goal[1]},-,{episode},{total_reward}\n")
 
     def close(self):
         self.env.close()
@@ -261,7 +165,6 @@ def main(args=None):
     arg_parser.add_argument('--episodes', type=int, default=10, help='Number of training games')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
     arg_parser.add_argument('--min_distance', type=float, default=2.0, help='Minimum distance between start and goal positions')
-    arg_parser.add_argument('--eval_episodes', type=int, default=10, help='Number of evaluation episodes after training')
 
     parsed = arg_parser.parse_args(args=args)
 
@@ -273,8 +176,7 @@ def main(args=None):
             timesteps=parsed.timesteps,
             episodes=parsed.episodes,
             model_path=parsed.model_path,
-            min_distance=parsed.min_distance,
-            eval_episodes=parsed.eval_episodes
+            min_distance=parsed.min_distance
         )
         # 只进行训练和评估
         node.train_and_evaluate()
