@@ -34,6 +34,7 @@ source $HOME/.local/bin/env
 ```
 uv venv --system-site-packages
 source .venv/bin/activate
+# source venv/bin/activate
 uv pip install -r requirements.txt
 ```
 ## Compile and build your workspace

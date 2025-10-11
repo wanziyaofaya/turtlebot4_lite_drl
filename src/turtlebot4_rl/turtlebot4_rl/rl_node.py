@@ -33,7 +33,7 @@ class TurtleBotRLNode(Node):
         self.min_distance = min_distance
 
         # Map boundaries (based on the warehouse map)
-        self.map_bounds = {'x_min': -9.5, 'x_max': 9.5, 'y_min': -9.5, 'y_max': 9.5}
+        self.map_bounds = {'x_min': -2.5, 'x_max': 2.5, 'y_min': -2.5, 'y_max': 2.5}
 
         self.model_dir = os.path.join('models', self.algorithm)
         os.makedirs(self.model_dir, exist_ok=True)
@@ -106,18 +106,18 @@ class TurtleBotRLNode(Node):
                     verbose=1,
                     device='cuda',
                     tensorboard_log=self.tensorboard_log,  # 添加Tensorboard日志
-                    learning_rate=1e-4,  # 降低学习率
-                    n_steps=2048,  # 减少步数
+                    learning_rate=3e-4,  # 降低学习率
+                    n_steps=512,  # 减少步数
                     batch_size=128,  # 减少批次大小
-                    n_epochs=5,
+                    n_epochs=3,
                     gamma=0.99,
                     gae_lambda=0.95,
                     clip_range=0.2,
-                    ent_coef=0.01,
+                    ent_coef=0.001,
                     vf_coef=0.5,
                     max_grad_norm=0.5,  # 添加梯度裁剪
                     policy_kwargs=dict(
-                        net_arch=[dict(pi=[128, 128], vf=[128, 128])],
+                        net_arch=[dict(pi=[64, 64], vf=[64, 64])],
                         activation_fn=torch.nn.Tanh
                     )
                 )

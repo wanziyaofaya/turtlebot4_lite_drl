@@ -314,7 +314,7 @@ class TurtleBotNavEnv(gym.Env):
         except Exception as e:
             raise RuntimeError(f"Service call failed: {e}")
 
-        time.sleep(0.1)
+        time.sleep(0.5)
 
         self._calibrate_odom()
 
