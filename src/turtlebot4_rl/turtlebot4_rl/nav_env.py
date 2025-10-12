@@ -14,7 +14,7 @@ import math
 import tf_transformations
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.5  # 目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.3  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, start_position, goal_position, max_wait_for_observation=15.0):
@@ -27,14 +27,14 @@ class TurtleBotNavEnv(gym.Env):
 
         # Define action spaces
         # Bounds for moving [linear, angular]
-        self.action_space = gym.spaces.Box(low=np.array([-3.0, -1.5]), high=np.array([3.0, 1.5]), dtype=np.float32)
+        self.action_space = gym.spaces.Box(low=np.array([-0.3, -1.5]), high=np.array([0.3, 1.5]), dtype=np.float32)
 
         # Continuous observation (LiDAR scans + robot state)
         # LiDAR: 640 values (0.0-10.0m) + robot state: 4 values
         # Robot state: [distance_to_goal, angle_to_goal, prev_linear_vel, prev_angular_vel]
         self.observation_space = gym.spaces.Box(
-            low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -3.0, -1.5])]),
-            high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 3.0, 1.5])]),
+            low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -0.3, -1.5])]),
+            high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 0.3, 1.5])]),
             dtype=np.float32
         )
 
@@ -238,33 +238,26 @@ class TurtleBotNavEnv(gym.Env):
         if target:
             return 2000.0  
         elif collision:
-            return -5000.0  
+            return -2000.0  
         else:
             # 每步惩罚
             step_penalty = -0.01
 
-            # 距离目标的奖励（越接近目标奖励越高）
-            distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-            if distance_to_goal < 2.0:
-                distance_reward = max(0, 1 - distance_to_goal / 2.0) * 2  # 归一化到 [0,2]
-            else:
-                distance_reward = 0.0
-
             # 激励机器人保持线速度并减少角速度
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
             angular_vel = self.last_action[1] if hasattr(self, 'last_action') else 0.0
-            velocity_reward = linear_vel - abs(angular_vel) * 0.5
+            velocity_reward = linear_vel - abs(angular_vel) * 0.2
 
             # 激励机器人远离障碍物
             obstacle_penalty = max(0, 1 - min_laser * 2.0) * 0.5
 
             # 综合奖励
-            reward = step_penalty + distance_reward  + velocity_reward  - obstacle_penalty 
+            reward = step_penalty + velocity_reward - obstacle_penalty
             return reward
 
     def _is_collision(self):
         """Check if a collision has occurred based on LiDAR data."""
-        collision_threshold = 0.2
+        collision_threshold = 0.25
         min_lidar = np.min(self.lidar_data) if self.lidar_data is not None else float('inf')
         collision = min_lidar < collision_threshold
         if collision:

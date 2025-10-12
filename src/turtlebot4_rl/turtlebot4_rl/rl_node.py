@@ -42,11 +42,6 @@ class TurtleBotRLNode(Node):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.tensorboard_log = os.path.join('tensorboard_logs', self.algorithm, timestamp)
         os.makedirs(self.tensorboard_log, exist_ok=True)
-        self.tb_writer = SummaryWriter(self.tensorboard_log)
-
-        self.metrics_file = os.path.join(self.model_dir, f"metrics_{timestamp}.txt")
-        with open(self.metrics_file, 'w') as f:
-            f.write("Start_X,Start_Y,Goal_X,Goal_Y,Model_Path,Episode,Total_Reward\n")
 
         # Initialize environment with random positions
         start_pos, goal_pos = self._generate_random_positions()
@@ -107,13 +102,13 @@ class TurtleBotRLNode(Node):
                     device='cuda',
                     tensorboard_log=self.tensorboard_log,  # 添加Tensorboard日志
                     learning_rate=3e-4,  # 降低学习率
-                    n_steps=512,  # 减少步数
-                    batch_size=128,  # 减少批次大小
-                    n_epochs=3,
+                    n_steps=1024,  # 减少步数
+                    batch_size=64,  # 减少批次大小
+                    n_epochs=10,
                     gamma=0.99,
                     gae_lambda=0.95,
-                    clip_range=0.2,
-                    ent_coef=0.001,
+                    clip_range=0.1,
+                    ent_coef=0.01,
                     vf_coef=0.5,
                     max_grad_norm=0.5,  # 添加梯度裁剪
                     policy_kwargs=dict(
@@ -139,9 +134,9 @@ class TurtleBotRLNode(Node):
             self.get_logger().info(f"Game {game}: Training for {max_steps} timesteps...")
             self.model.learn(total_timesteps=max_steps, reset_num_timesteps=False)
 
-            # 每100个episode保存一次模型
-            if game % 100 == 0:
-                model_save_path = os.path.join(self.model_dir, f"model_{game-99}-{game}.zip")
+            # 每20个episode保存一次模型
+            if game % 20 == 0:
+                model_save_path = os.path.join(self.model_dir, f"model_{game-19}-{game}.zip")
                 self.model.save(model_save_path)
                 self.get_logger().info(f"Model checkpoint saved to {model_save_path}.")
 

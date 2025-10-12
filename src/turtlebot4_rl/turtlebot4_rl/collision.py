@@ -23,7 +23,7 @@ def point_in_obstacle(x, y):
     return False
 
 
-DEFAULT_CLEARANCE = 0.10  # 机器人半径约0.2m，加上少量裕度
+DEFAULT_CLEARANCE = 0.3  # 机器人半径约0.2m，加上少量裕度
 
 
 def is_spawn_position_valid(x, y, bounds=None, clearance=DEFAULT_CLEARANCE):
