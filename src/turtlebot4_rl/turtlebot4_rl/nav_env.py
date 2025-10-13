@@ -236,23 +236,32 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            return 2000.0  
+            return 100.0  # 降低目标奖励
         elif collision:
-            return -2000.0  
+            return -100.0  # 降低碰撞惩罚
         else:
-            # 每步惩罚
-            step_penalty = -0.01
+            # 每步时间惩罚（增加以缩短episode）
+            step_penalty = -0.1
 
-            # 激励机器人保持线速度并减少角速度
+            # 距离奖励：计算距离减少比例（相对于初始距离）
+            initial_distance = np.linalg.norm(self.goal_position - self.start_position)
+            current_distance = np.linalg.norm(self.goal_position - self.current_position)
+            if initial_distance > 0:
+                distance_reward = 1 - current_distance / initial_distance
+            else:
+                distance_reward = 0.0  # 起点等于终点时，无奖励
+            self.prev_distance_to_goal = current_distance  # 更新上一距离
+
+            # 速度奖励：鼓励前进，惩罚过度旋转
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
             angular_vel = self.last_action[1] if hasattr(self, 'last_action') else 0.0
             velocity_reward = linear_vel - abs(angular_vel) * 0.2
 
-            # 激励机器人远离障碍物
+            # 障碍物惩罚：保持但调整权重
             obstacle_penalty = max(0, 1 - min_laser * 2.0) * 0.5
 
             # 综合奖励
-            reward = step_penalty + velocity_reward - obstacle_penalty
+            reward = step_penalty + distance_reward + velocity_reward - obstacle_penalty
             return reward
 
     def _is_collision(self):

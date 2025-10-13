@@ -16,6 +16,30 @@ import torch
 import random
 from torch.utils.tensorboard import SummaryWriter
 
+
+class SuccessRateCallback(BaseCallback):
+    """Tracks success ratio across rollouts and logs to TensorBoard."""
+
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.success_count = 0
+        self.episode_count = 0
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get('infos', [])
+        for info in infos:
+            if info.get('is_success', False):
+                self.success_count += 1
+        return True
+
+    def _on_rollout_end(self) -> None:
+        episodes_in_rollout = len(self.locals.get('episode_rewards', []))
+        self.episode_count += episodes_in_rollout
+        if self.episode_count > 0:
+            success_rate = self.success_count / self.episode_count
+            self.logger.record('rollout/success_rate', success_rate)
+
+
 class TurtleBotRLNode(Node):
     """Custom callback for logging all episode metrics to Tensorboard."""
 
@@ -100,19 +124,20 @@ class TurtleBotRLNode(Node):
                     self.env, 
                     verbose=1,
                     device='cuda',
-                    tensorboard_log=self.tensorboard_log,  # 添加Tensorboard日志
-                    learning_rate=3e-4,  # 降低学习率
-                    n_steps=1024,  # 减少步数
-                    batch_size=64,  # 减少批次大小
+                    tensorboard_log=self.tensorboard_log,
+                    learning_rate=3e-4,
+                    n_steps=1024,
+                    batch_size=64,
                     n_epochs=10,
-                    gamma=0.99,
+                    gamma=0.95,
                     gae_lambda=0.95,
-                    clip_range=0.1,
-                    ent_coef=0.01,
-                    vf_coef=0.5,
-                    max_grad_norm=0.5,  # 添加梯度裁剪
+                    clip_range=0.2,
+                    ent_coef=0.2,
+                    target_kl=0.01,
+                    vf_coef=0.75,
+                    max_grad_norm=0.5,
                     policy_kwargs=dict(
-                        net_arch=[dict(pi=[64, 64], vf=[64, 64])],
+                        net_arch=[dict(pi=[128, 128], vf=[128, 128])],
                         activation_fn=torch.nn.Tanh
                     )
                 )
@@ -132,11 +157,11 @@ class TurtleBotRLNode(Node):
             
             # 使用model.learn()进行训练，而不是手动循环
             self.get_logger().info(f"Game {game}: Training for {max_steps} timesteps...")
-            self.model.learn(total_timesteps=max_steps, reset_num_timesteps=False)
+            self.model.learn(total_timesteps=max_steps, callback=SuccessRateCallback(), reset_num_timesteps=False)
 
-            # 每20个episode保存一次模型
-            if game % 20 == 0:
-                model_save_path = os.path.join(self.model_dir, f"model_{game-19}-{game}.zip")
+            # 每个episode保存一次模型
+            if game % 1 == 0:
+                model_save_path = os.path.join(self.model_dir, f"model_{game-1}-{game}.zip")
                 self.model.save(model_save_path)
                 self.get_logger().info(f"Model checkpoint saved to {model_save_path}.")
 
