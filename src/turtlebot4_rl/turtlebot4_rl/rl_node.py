@@ -26,18 +26,23 @@ class SuccessRateCallback(BaseCallback):
         self.episode_count = 0
 
     def _on_step(self) -> bool:
+        # 统计本 rollout 的成功 episode 数
         infos = self.locals.get('infos', [])
         for info in infos:
-            if info.get('is_success', False):
+            # 只有 episode 结束时才统计 is_success
+            if info.get('done', False) and info.get('is_success', False):
                 self.success_count += 1
         return True
 
     def _on_rollout_end(self) -> None:
+        # 只统计本次 rollout 的成功率
         episodes_in_rollout = len(self.locals.get('episode_rewards', []))
-        self.episode_count += episodes_in_rollout
-        if self.episode_count > 0:
-            success_rate = self.success_count / self.episode_count
+        if episodes_in_rollout > 0:
+            success_rate = self.success_count / episodes_in_rollout
             self.logger.record('rollout/success_rate', success_rate)
+        # 重置计数器，准备下一个 rollout
+        self.success_count = 0
+        self.episode_count = 0
 
 
 class TurtleBotRLNode(Node):
@@ -133,7 +138,7 @@ class TurtleBotRLNode(Node):
                     gae_lambda=0.95,
                     clip_range=0.2,
                     ent_coef=0.2,
-                    target_kl=0.01,
+                    target_kl=0.1,
                     vf_coef=0.75,
                     max_grad_norm=0.5,
                     policy_kwargs=dict(
