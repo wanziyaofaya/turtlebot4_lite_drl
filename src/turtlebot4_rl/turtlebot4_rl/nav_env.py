@@ -17,7 +17,7 @@ import tf_transformations
 GOAL_REACH_THRESHOLD = 0.3  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, start_position, goal_position, max_wait_for_observation=15.0):
+    def __init__(self, start_position, goal_position, max_wait_for_observation=15.0, action_repeat=200, action_dt=0.01):
         super().__init__()
 
         if not rclpy.ok():
@@ -26,12 +26,9 @@ class TurtleBotNavEnv(gym.Env):
         self.node = rclpy.create_node('turtlebot_nav_env')
 
         # Define action spaces
-        # Bounds for moving [linear, angular]
         self.action_space = gym.spaces.Box(low=np.array([-0.3, -1.5]), high=np.array([0.3, 1.5]), dtype=np.float32)
 
         # Continuous observation (LiDAR scans + robot state)
-        # LiDAR: 640 values (0.0-10.0m) + robot state: 4 values
-        # Robot state: [distance_to_goal, angle_to_goal, prev_linear_vel, prev_angular_vel]
         self.observation_space = gym.spaces.Box(
             low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -0.3, -1.5])]),
             high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 0.3, 1.5])]),
@@ -51,6 +48,10 @@ class TurtleBotNavEnv(gym.Env):
         self.current_yaw = 0.0
         self.done = False
         self.max_wait_for_observation = max_wait_for_observation
+
+        # 动作持续参数
+        self.action_repeat = action_repeat  # 每步动作持续次数
+        self.action_dt = action_dt          # 每次动作持续时间（秒）
 
         # Odometry calibration
         self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
@@ -149,34 +150,44 @@ class TurtleBotNavEnv(gym.Env):
         return self._get_state(), {}
 
     def step(self, action):
-        """Execute one step in the environment."""
-        # Take the action and save it
-        self._take_action(action)
+        """Execute one step in the environment: 先执行所有动作，再一次性获取最新状态。"""
+        # 先执行所有动作，不采集中间状态
+        for _ in range(self.action_repeat):
+            self._take_action(action)
+            rclpy.spin_once(self.node, timeout_sec=self.action_dt)
         self.last_action = action
 
-        # Wait for new sensor data
-        if not self._wait_for_new_state():
+        # 动作全部执行完毕后，等待 odom 和 LiDAR 都有新数据
+        old_position = self.current_position.copy()
+        old_lidar_id = id(self.lidar_data)
+        start_time = time.time()
+        odom_updated = False
+        lidar_updated = False
+        while (time.time() - start_time < self.max_wait_for_observation):
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+            if not odom_updated and not np.allclose(self.current_position, old_position):
+                odom_updated = True
+            if not lidar_updated and id(self.lidar_data) != old_lidar_id:
+                lidar_updated = True
+            if odom_updated and lidar_updated:
+                break
+        if not lidar_updated:
             raise RuntimeError("No LiDAR data received after step timeout.")
 
-        # Check termination conditions
+        # 只在动作全部执行后获取一次最新状态
         done, collision, min_lidar = self._is_collision()
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         target = distance_to_goal < GOAL_REACH_THRESHOLD
-        
         if target:
             done = True
             self._print_and_log("Goal reached!")
 
-        # Calculate reward
         reward = self._calculate_reward(target, collision, min_lidar)
-
-        # 构造info字典，标记成功或碰撞
         info = {}
         if target:
             info['is_success'] = True
         elif collision:
             info['is_collision'] = True
-
         return self._get_state(), reward, done, False, info
 
     def _take_action(self, action):
@@ -232,27 +243,34 @@ class TurtleBotNavEnv(gym.Env):
         
         # Combine LiDAR data with robot state
         combined_state = np.concatenate([lidar_data, robot_state])
+        # self._print_and_log(f"State: distance_to_goal={distance_to_goal}, angle_to_goal={angle_to_goal}, prev_linear_vel={self.prev_linear_vel}, prev_angular_vel={self.prev_angular_vel}")
         return combined_state
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            return 2000.0  
+            return 100.0  # 降低目标奖励
         elif collision:
-            return -2000.0  
+            return -100.0  # 降低碰撞惩罚
         else:
-            # 每步惩罚
-            step_penalty = -0.01
+            # 每步时间惩罚（增加以缩短episode）
+            step_penalty = -1
 
-            # 激励机器人保持线速度并减少角速度
+            # 距离奖励：计算距离减少（相对于上一状态）
+            prev_distance = getattr(self, 'prev_distance_to_goal', np.linalg.norm(self.goal_position - self.start_position))
+            current_distance = np.linalg.norm(self.goal_position - self.current_position)
+            distance_reward = (prev_distance - current_distance) # 距离减少时给予正奖励
+            self.prev_distance_to_goal = current_distance  # 更新上一距离
+
+            # 速度奖励：鼓励前进，惩罚过度旋转
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
             angular_vel = self.last_action[1] if hasattr(self, 'last_action') else 0.0
-            velocity_reward = linear_vel - abs(angular_vel) * 0.2
+            velocity_reward = abs(linear_vel) - abs(angular_vel) * 0.2
 
-            # 激励机器人远离障碍物
-            obstacle_penalty = max(0, 1 - min_laser * 2.0) * 0.5
+            # 障碍物惩罚：保持但调整权重
+            obstacle_penalty = max(0, 1 - min_laser * 2.0)
 
             # 综合奖励
-            reward = step_penalty + velocity_reward - obstacle_penalty
+            reward = step_penalty + 2 * distance_reward + velocity_reward - obstacle_penalty
             return reward
 
     def _is_collision(self):
