@@ -131,7 +131,7 @@ class TurtleBotRLNode(Node):
                     device='cuda',
                     tensorboard_log=self.tensorboard_log,
                     learning_rate=3e-4,
-                    n_steps=1024,
+                    n_steps=128,
                     batch_size=64,
                     n_epochs=10,
                     gamma=0.95,
