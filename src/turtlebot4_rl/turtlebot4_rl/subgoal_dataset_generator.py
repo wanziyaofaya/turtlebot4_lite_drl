@@ -6,7 +6,7 @@ import random
 from turtlebot4_rl.collision import is_spawn_position_valid
 from datetime import datetime
 
-def generate_random_positions(map_bounds, min_distance=1.0):
+def generate_random_positions(map_bounds, min_distance=2.0):
     """生成不在障碍物内且距离足够的随机起点和终点"""
     max_attempts = 1000
     for _ in range(max_attempts):

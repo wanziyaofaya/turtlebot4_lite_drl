@@ -3,8 +3,11 @@ import numpy as np
 from stable_baselines3 import PPO, DQN, SAC
 from turtlebot4_rl.nav_env import TurtleBotNavEnv
 from turtlebot4_rl.collision import is_spawn_position_valid
+import sys
+sys.path.append('/home/turtlebot4/turtlebot4_lite_drl/src')
+print(sys.path)
 
-def test_model(model_path, algorithm='PPO', episodes=10, min_distance=1.0):
+def test_model(model_path, algorithm='PPO', episodes=10, min_distance=2.0):
     """
     测试训练好的模型。
     :param model_path: 模型文件路径
@@ -17,7 +20,7 @@ def test_model(model_path, algorithm='PPO', episodes=10, min_distance=1.0):
         raise FileNotFoundError(f"模型文件 {model_path} 不存在！")
 
     # 定义地图边界
-    map_bounds = {'x_min': -9.5, 'x_max': 9.5, 'y_min': -9.5, 'y_max': 9.5}
+    map_bounds = {'x_min': -2.5, 'x_max': 2.5, 'y_min': -2.5, 'y_max': 2.5}
 
     # 初始化环境
     env = TurtleBotNavEnv(np.array([0.0, 0.0], dtype=np.float32), np.array([5.0, 5.0], dtype=np.float32))
@@ -68,5 +71,5 @@ def test_model(model_path, algorithm='PPO', episodes=10, min_distance=1.0):
 
 if __name__ == '__main__':
     # 示例测试代码
-    test_model(model_path='models/PPO/model_20250929_161427.zip', algorithm='PPO', episodes=10, min_distance=1.0)
+    test_model(model_path='models/PPO/model_episode_4.zip', algorithm='PPO', episodes=10, min_distance=2.0)
     # python src/turtlebot4_rl/turtlebot4_rl/test_model.py

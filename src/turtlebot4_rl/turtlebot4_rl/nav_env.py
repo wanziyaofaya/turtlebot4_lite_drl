@@ -17,7 +17,7 @@ import tf_transformations
 GOAL_REACH_THRESHOLD = 0.3  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, start_position, goal_position, max_wait_for_observation=15.0, action_repeat=200, action_dt=0.01):
+    def __init__(self, start_position, goal_position, max_wait_for_observation=15.0):
         super().__init__()
 
         if not rclpy.ok():
@@ -46,14 +46,19 @@ class TurtleBotNavEnv(gym.Env):
         self.goal_position = np.array(goal_position, dtype=np.float32)
         self.current_position = np.copy(self.start_position)
         self.current_yaw = 0.0
+        self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+        self.best_distance_to_goal = np.linalg.norm(self.goal_position - self.start_position)
+        self.max_steps_without_improvement = 10000
+        self.distance_degradation_limit = 50
         self.done = False
         self.max_wait_for_observation = max_wait_for_observation
 
-        # 动作持续参数
-        self.action_repeat = action_repeat  # 每步动作持续次数
-        self.action_dt = action_dt          # 每次动作持续时间（秒）
+        self.previous_position = np.copy(self.start_position)
+        self.stationary_steps = 0
+        self.stationary_threshold = 0.01  # Threshold to consider the robot as stationary
+        self.max_stationary_steps = 100  # Maximum allowed stationary steps before penalty
 
-        # Odometry calibration
+        # Odometry calibration (不再使用动态偏移量)
         self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
         self.odom_calibrated = False
         self.yaw_offset = 0.0
@@ -63,7 +68,7 @@ class TurtleBotNavEnv(gym.Env):
         self.prev_angular_vel = 0.0
 
         self._reset_robot_position()
-        self._print_and_log("TurtleBotNavEnv initialized.")
+        self._print_and_log(f"TurtleBotNavEnv initialized ")
 
     def scan_callback(self, msg):
         """Updates state with current scan data."""
@@ -72,50 +77,49 @@ class TurtleBotNavEnv(gym.Env):
         self.lidar_data[np.isinf(self.lidar_data)] = 12.0
 
     def odom_callback(self, msg):
-        """Updates current position and orientation, applying odometry offsets if calibrated."""
-        # Extract position
         odom_x = msg.pose.pose.position.x
         odom_y = msg.pose.pose.position.y
 
-        # Extract orientation (yaw)
         odom_q = msg.pose.pose.orientation
-        odom_euler = tf_transformations.euler_from_quaternion([
-            odom_q.x,
-            odom_q.y,
-            odom_q.z,
-            odom_q.w
+        _, _, odom_yaw = tf_transformations.euler_from_quaternion([
+            odom_q.x, odom_q.y, odom_q.z, odom_q.w
         ])
-        odom_yaw = odom_euler[2]  # Yaw angle in radians
 
         if not self.odom_calibrated:
-            # Calibrate odometry offsets
-            self.odom_position_offset = np.array([
-                odom_x - self.start_position[0],
-                odom_y - self.start_position[1]
-            ], dtype=np.float32)
+            # 记录初始的 odom 姿态
+            self.initial_odom = np.array([odom_x, odom_y], dtype=np.float32)
+            self.initial_odom_yaw = odom_yaw
 
-            # Set yaw offset based on desired yaw (facing downwards)
-            desired_yaw = -math.pi / 2  # Facing downwards (270 degrees)
-            self.yaw_offset = desired_yaw - odom_yaw
+            # Gazebo 设定的起点和朝向
+            self.start_yaw = -math.pi / 2  # Facing -y
+            self.start_position = np.array(self.start_position, dtype=np.float32)
+
+            # 计算旋转和平移偏移
+            self.yaw_offset = self.start_yaw - odom_yaw
+            self.translation_offset = self.start_position - self._rotate_2d(
+                np.array([odom_x, odom_y], dtype=np.float32),
+                self.yaw_offset
+            )
 
             self.odom_calibrated = True
-            # self._print_and_log(f"Odometry calibrated. Position offset: {self.odom_position_offset}, Orientation offset: {self.yaw_offset:.2f} radians.")
-
-            # Reset current position and yaw to start position and desired yaw (facing downwards)
             self.current_position = np.copy(self.start_position)
-            self.current_yaw = desired_yaw
+            self.current_yaw = self.start_yaw
             return
 
-        # Apply position offset
-        adjusted_x = odom_x - self.odom_position_offset[0]
-        adjusted_y = odom_y - self.odom_position_offset[1]
-        self.current_position = np.array([adjusted_x, adjusted_y], dtype=np.float32)
+        rotated = self._rotate_2d(
+            np.array([odom_x, odom_y], dtype=np.float32),
+            self.yaw_offset
+        )
+        adjusted = rotated + self.translation_offset
+        self.current_position = adjusted
 
-        # Apply orientation offset
-        adjusted_yaw = odom_yaw + self.yaw_offset
-        # Normalize yaw to [-pi, pi]
-        adjusted_yaw = (adjusted_yaw + math.pi) % (2 * math.pi) - math.pi
-        self.current_yaw = adjusted_yaw
+        self.current_yaw = (odom_yaw + self.yaw_offset + math.pi) % (2 * math.pi) - math.pi
+
+    def _rotate_2d(self, point, theta):
+        """Rotate a 2D point by theta (radians)."""
+        c, s = math.cos(theta), math.sin(theta)
+        x, y = point
+        return np.array([c*x - s*y, s*x + c*y], dtype=np.float32)
 
     def seed(self, seed=0):
         """Set the random seed for reproducibility."""
@@ -124,13 +128,11 @@ class TurtleBotNavEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None, start_position=None, goal_position=None):
         """Reset the environment. Optionally set new start and goal positions."""
+        
         if start_position is not None:
             self.start_position = np.array(start_position, dtype=np.float32)
         if goal_position is not None:
             self.goal_position = np.array(goal_position, dtype=np.float32)
-
-        # Print start and goal positions for this episode
-        self._print_and_log(f"Episode starting - Start position: [{self.start_position[0]:.2f}, {self.start_position[1]:.2f}], Goal position: [{self.goal_position[0]:.2f}, {self.goal_position[1]:.2f}]")
 
         super().reset(seed=seed)
 
@@ -142,6 +144,9 @@ class TurtleBotNavEnv(gym.Env):
 
         # Reset state variables
         self.lidar_data = None
+        self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+        self.direction_history = []
+        self.previous_position = np.copy(self.start_position)
 
         # Wait for initial observations
         if not self._wait_for_new_state():
@@ -150,31 +155,42 @@ class TurtleBotNavEnv(gym.Env):
         return self._get_state(), {}
 
     def step(self, action):
-        """Execute one step in the environment: 先执行所有动作，再一次性获取最新状态。"""
-        # 先执行所有动作，不采集中间状态
-        for _ in range(self.action_repeat):
-            self._take_action(action)
-            rclpy.spin_once(self.node, timeout_sec=self.action_dt)
+        """Execute one step in the environment."""
+        # 保存执行动作前的距离作为"上次距离"
+        self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+        
+        # Execute action once
+        self._take_action(action)
         self.last_action = action
 
-        # 动作全部执行完毕后，等待 odom 和 LiDAR 都有新数据
+        # Wait for both odom and LiDAR to update
         old_position = self.current_position.copy()
         old_lidar_id = id(self.lidar_data)
         start_time = time.time()
         odom_updated = False
         lidar_updated = False
+        
         while (time.time() - start_time < self.max_wait_for_observation):
             rclpy.spin_once(self.node, timeout_sec=0.05)
-            if not odom_updated and not np.allclose(self.current_position, old_position):
+            
+            # Check if odometry has been updated
+            if not odom_updated and not np.allclose(self.current_position, old_position, atol=1e-3):
                 odom_updated = True
+            
+            # Check if LiDAR has been updated
             if not lidar_updated and id(self.lidar_data) != old_lidar_id:
                 lidar_updated = True
+            
+            # Break if both are updated
             if odom_updated and lidar_updated:
                 break
+        
         if not lidar_updated:
             raise RuntimeError("No LiDAR data received after step timeout.")
+        if not odom_updated:
+            self._print_and_log("Warning: Odometry data may not have been updated after action.")
 
-        # 只在动作全部执行后获取一次最新状态
+        # Get current state
         done, collision, min_lidar = self._is_collision()
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         target = distance_to_goal < GOAL_REACH_THRESHOLD
@@ -226,8 +242,19 @@ class TurtleBotNavEnv(gym.Env):
         
         # Robot state: [distance_to_goal, angle_to_goal, prev_linear_vel, prev_angular_vel]
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+
+        # 添加详细调试信息 - 所有坐标均为环境坐标系
+        self._print_and_log(
+            f"🔍 状态信息: "
+            f"起始=[{self.start_position[0]:.3f}, {self.start_position[1]:.3f}] | "
+            f"目标=[{self.goal_position[0]:.3f}, {self.goal_position[1]:.3f}] | "
+            f"当前=[{self.current_position[0]:.3f}, {self.current_position[1]:.3f}] | "
+            f"距离目标={distance_to_goal:.3f}m | "
+            f"上次距离={self.last_distance_to_goal:.3f}m | "
+            f"改进={self.last_distance_to_goal - distance_to_goal:+.3f}m | "
+        )
         
-        # Calculate angle to goal relative to robot's current orientation
+        # Calculate angle to goal relative to robot's current orientatilobal = np.arctan2(goal_vector[1], goal_vector[0])
         goal_vector = self.goal_position - self.current_position
         angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
         angle_to_goal = angle_to_goal_global - self.current_yaw
@@ -243,36 +270,121 @@ class TurtleBotNavEnv(gym.Env):
         
         # Combine LiDAR data with robot state
         combined_state = np.concatenate([lidar_data, robot_state])
-        # self._print_and_log(f"State: distance_to_goal={distance_to_goal}, angle_to_goal={angle_to_goal}, prev_linear_vel={self.prev_linear_vel}, prev_angular_vel={self.prev_angular_vel}")
+        self._print_and_log(f"State: distance_to_goal={distance_to_goal}, angle_to_goal={angle_to_goal}, prev_linear_vel={self.prev_linear_vel}, prev_angular_vel={self.prev_angular_vel}")
         return combined_state
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            return 100.0  # 降低目标奖励
+            target_reward = 10.0
+            self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
+            return target_reward
         elif collision:
-            return -100.0  # 降低碰撞惩罚
+            collision_reward = -8.0
+            self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
+            return collision_reward
         else:
-            # 每步时间惩罚（增加以缩短episode）
-            step_penalty = -1
+            distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+            distance_improvement = self.last_distance_to_goal - distance_to_goal
+            
+            # 奖励参数 - 调整后的版本
+            alpha = 200.0  # 增加正向奖励，让靠近目标更有吸引力
+            beta = 150.0   # 适度惩罚远离目标的行为
+            step_penalty_coef = 0.02  # 稍微增加时间压力
+            orientation_scale = 0.2   # 增加朝向奖励的权重
 
-            # 距离奖励：计算距离减少（相对于上一状态）
-            prev_distance = getattr(self, 'prev_distance_to_goal', np.linalg.norm(self.goal_position - self.start_position))
-            current_distance = np.linalg.norm(self.goal_position - self.current_position)
-            distance_reward = (prev_distance - current_distance) # 距离减少时给予正奖励
-            self.prev_distance_to_goal = current_distance  # 更新上一距离
+            # === 距离改进奖励/惩罚 ===
+            distance_reward = 0.0
+            if distance_improvement > 0:
+                distance_reward = alpha * distance_improvement
+                # Update progress time
+                if hasattr(self, 'last_progress_time'):
+                    self.last_progress_time = time.time()
+            else:
+                distance_reward = beta * distance_improvement  # distance_improvement is negative
 
-            # 速度奖励：鼓励前进，惩罚过度旋转
+            # === 步数惩罚 ===
+            step_penalty = step_penalty_coef
+
+            # === 障碍物距离惩罚 ===
+            obstacle_penalty = max(0, 1 - min_laser * 2.0) * 0.5
+
+            # === 朝向目标角度 ===
+            desired_yaw = math.atan2(
+                self.goal_position[1] - self.current_position[1],
+                self.goal_position[0] - self.current_position[0]
+            )
+            yaw_diff = self._angle_difference(self.current_yaw, desired_yaw)
+            orientation_reward = math.cos(yaw_diff) * orientation_scale
+
+            # 改进的速度奖励：更合理的速度激励
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
-            angular_vel = self.last_action[1] if hasattr(self, 'last_action') else 0.0
-            velocity_reward = abs(linear_vel) - abs(angular_vel) * 0.2
+            angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
 
-            # 障碍物惩罚：保持但调整权重
-            obstacle_penalty = max(0, 1 - min_laser * 2.0)
+            velocity_reward = linear_vel * 0.3  - abs(angular_vel) * 0.2  # 鼓励前进，适度惩罚旋转
 
-            # 综合奖励
-            reward = step_penalty + 2 * distance_reward + velocity_reward - obstacle_penalty
-            return reward
+            
+            # === 计算总奖励 ===
+            total_reward = (distance_reward - step_penalty - obstacle_penalty + 
+                          orientation_reward + velocity_reward)
 
+            # 打印详细的奖励分解
+            self._print_and_log(
+                f"📊 REWARD BREAKDOWN: "
+                f"distance={distance_reward:+.3f} | "
+                f"step=-{step_penalty:.3f} | "
+                f"obstacle=-{obstacle_penalty:.3f} | "
+                f"orientation={orientation_reward:.3f} | "
+                f"velocity={velocity_reward:+.3f} | "
+                f"TOTAL={total_reward:+.2f}"
+            )
+
+            
+            # 打印状态信息
+            # self._print_and_log(
+            #     f"📍 STATE INFO: "
+            #     f"dist_to_goal={distance_to_goal:.3f}m | "
+            #     f"improvement={distance_improvement:+.4f}m | "
+            #     f"min_laser={min_laser:.3f}m | "
+            #     f"stationary_steps={self.stationary_steps} | "
+            #     f"yaw_diff={abs(yaw_diff)*180/math.pi:.1f}° | "
+            #     f"vel=[{linear_vel:.2f}, {angular_vel:.2f}]"
+            # )
+
+            # === 更新状态 ===
+            self.previous_position = np.copy(self.current_position)
+            # 注意：last_distance_to_goal 现在在 step() 方法开始时更新
+            return total_reward
+
+    def _count_oscillations(self):
+        """
+        Count the number of direction changes in the recent movement history.
+        Oscillation is detected when the movement direction alternates frequently.
+        """
+        oscillations = 0
+        for i in range(1, len(self.direction_history)):
+            if self.direction_history[i] != 0 and self.direction_history[i] != self.direction_history[i-1]:
+                oscillations += 1
+        return oscillations
+     
+    def _update_direction_history(self, movement_direction):
+        """
+        Update the movement direction history with the latest movement.
+        """
+        self.direction_history.append(movement_direction)
+        if len(self.direction_history) > self.max_history:
+            self.direction_history.pop(0)
+
+    def _angle_difference(self, current, target):
+        """
+        Compute the smallest difference between two angles.
+        """
+        diff = target - current
+        while diff > math.pi:
+            diff -= 2 * math.pi
+        while diff < -math.pi:
+            diff += 2 * math.pi
+        return diff
+    
     def _is_collision(self):
         """Check if a collision has occurred based on LiDAR data."""
         collision_threshold = 0.25
@@ -304,12 +416,11 @@ class TurtleBotNavEnv(gym.Env):
         node = Node()
         pose_msg = Pose()
         pose_msg.name = "turtlebot4"
-
         pose_msg.position.x = float(self.start_position[0])
         pose_msg.position.y = float(self.start_position[1])
         pose_msg.position.z = 0.0
 
-        yaw = -math.pi / 2  # Desired yaw in radians (facing downwards)
+        yaw = -math.pi / 2  # Desired yaw in radians (facing downwards, -y direction in Gazebo)
         pose_msg.orientation.w = math.cos(yaw / 2.0)
         pose_msg.orientation.x = 0.0
         pose_msg.orientation.y = 0.0

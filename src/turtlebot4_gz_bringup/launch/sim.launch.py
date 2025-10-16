@@ -90,7 +90,7 @@ def generate_launch_description():
                 '.sdf',
                 ' -r',
                 ' -v 4',
-                ' --gui-config ',
+                ' --gui-config ', 
                 PathJoinSubstitution([
                     pkg_turtlebot4_gz_bringup,
                     'gui',
