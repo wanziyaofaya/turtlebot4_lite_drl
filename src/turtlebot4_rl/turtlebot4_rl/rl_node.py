@@ -125,6 +125,12 @@ class TurtleBotRLNode(Node):
         num_games = self.episodes 
         max_steps = self.timesteps 
         self.get_logger().info(f"Training for {num_games} games, each up to {max_steps} timesteps.")
+
+        # 添加自定义回调
+        success_rate_callback = SuccessRateCallback(tensorboard_log_dir=self.tensorboard_log, verbose=1)
+        
+        # 添加训练开始时间戳用于区分不同的训练会话
+        training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         for game in range(1, num_games + 1):
             # 生成新的起点和目标点
@@ -133,19 +139,42 @@ class TurtleBotRLNode(Node):
             
             # 使用model.learn()进行训练，而不是手动循环
             self.get_logger().info(f"Game {game}: Training for {max_steps} timesteps...")
-            # 添加自定义回调
-            success_rate_callback = SuccessRateCallback(tensorboard_log_dir=self.tensorboard_log, verbose=1)
             self.model.learn(total_timesteps=max_steps, reset_num_timesteps=False, callback=[success_rate_callback])
 
-            # 每个episode保存一次模型
-            model_save_path = os.path.join(self.model_dir, f"model_episode_{game}.zip")
-            self.model.save(model_save_path)
-            self.get_logger().info(f"Model checkpoint saved to {model_save_path}.")
+            # 每10个episode保存一次模型
+            if game % 10 == 0:
+                model_save_path = os.path.join(
+                    self.model_dir, 
+                    f"{self.algorithm}_{training_session}_checkpoint_ep{game:03d}_ts{max_steps}.zip"
+                )
+                self.model.save(model_save_path)
+                self.get_logger().info(f"Model checkpoint saved after episode {game}: {model_save_path}")
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_path = os.path.join(self.model_dir, f"model_{timestamp}.zip")
-        self.model.save(model_path)
-        self.get_logger().info(f"Model saved to {model_path}.")
+        # 如果最后的episode不是10的倍数，或者要保存最终模型
+        if num_games % 10 != 0:
+            final_model_path = os.path.join(
+                self.model_dir, 
+                f"{self.algorithm}_{training_session}_FINAL_ep{num_games:03d}_ts{max_steps}.zip"
+            )
+            self.model.save(final_model_path)
+            self.get_logger().info(f"Final model saved: {final_model_path}")
+        else:
+            # 如果最后的episode正好是10的倍数，重命名最后保存的模型为FINAL
+            last_checkpoint = os.path.join(
+                self.model_dir, 
+                f"{self.algorithm}_{training_session}_checkpoint_ep{num_games:03d}_ts{max_steps}.zip"
+            )
+            final_model_path = os.path.join(
+                self.model_dir, 
+                f"{self.algorithm}_{training_session}_FINAL_ep{num_games:03d}_ts{max_steps}.zip"
+            )
+            if os.path.exists(last_checkpoint):
+                os.rename(last_checkpoint, final_model_path)
+                self.get_logger().info(f"Last checkpoint renamed to final model: {final_model_path}")
+            else:
+                # 备用方案：直接保存最终模型
+                self.model.save(final_model_path)
+                self.get_logger().info(f"Final model saved: {final_model_path}")
 
     def close(self):
         self.env.close()

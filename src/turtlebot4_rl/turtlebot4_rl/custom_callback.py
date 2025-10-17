@@ -9,6 +9,7 @@ class SuccessRateCallback(BaseCallback):
         self.episode_success_count = 0
         self.episode_game_count = 0
         self.total_timesteps = 0
+        self.total_successes = 0  # 新增：累积成功次数
 
     def _on_step(self) -> bool:
         # Increment total timesteps
@@ -21,12 +22,20 @@ class SuccessRateCallback(BaseCallback):
         # Check if the environment is resetting (due to success, collision, or timeout)
         if self.locals['dones'][0]:
             self.episode_game_count += 1
+            
+            # 记录成功次数
+            if self.locals['infos'][0].get('is_success', False):
+                self.total_successes += 1
 
         # Calculate success rate
         success_rate = (self.episode_success_count / self.episode_game_count) if self.episode_game_count > 0 else 0.0
 
         # Log success rate to TensorBoard at every step
         self.writer.add_scalar('SuccessRate/Timesteps', success_rate, self.total_timesteps)
+        
+        # 每个episode结束时记录累积成功次数
+        if self.locals['dones'][0]:
+            self.writer.add_scalar('Episode/TotalSuccesses', self.total_successes, self.total_timesteps)
 
         return True
 
