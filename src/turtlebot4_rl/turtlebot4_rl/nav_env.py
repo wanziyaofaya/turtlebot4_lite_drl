@@ -288,8 +288,8 @@ class TurtleBotNavEnv(gym.Env):
             # 奖励参数 - 调整后的版本
             alpha = 200.0  # 增加正向奖励，让靠近目标更有吸引力
             beta = 150.0   # 适度惩罚远离目标的行为
-            step_penalty_coef = 0.02  # 稍微增加时间压力
-            orientation_scale = 0.2   # 增加朝向奖励的权重
+            step_penalty_coef = 0.04 
+            orientation_scale = 0.2   
 
             # === 距离改进奖励/惩罚 ===
             distance_reward = 0.0
