@@ -25,8 +25,18 @@ class TurtleBotNavEnv(gym.Env):
 
         self.node = rclpy.create_node('turtlebot_nav_env')
 
+        # Velocity limits (use constants so clipping is consistent)
+        self.MAX_LINEAR_VEL = 0.3
+        self.MIN_LINEAR_VEL = -0.3
+        self.MAX_ANGULAR_VEL = 1.5
+        self.MIN_ANGULAR_VEL = -1.5
+
         # Define action spaces
-        self.action_space = gym.spaces.Box(low=np.array([-0.3, -1.5]), high=np.array([0.3, 1.5]), dtype=np.float32)
+        self.action_space = gym.spaces.Box(
+            low=np.array([self.MIN_LINEAR_VEL, self.MIN_ANGULAR_VEL], dtype=np.float32),
+            high=np.array([self.MAX_LINEAR_VEL, self.MAX_ANGULAR_VEL], dtype=np.float32),
+            dtype=np.float32
+        )
 
         # Continuous observation (LiDAR scans + robot state)
         self.observation_space = gym.spaces.Box(
@@ -215,6 +225,9 @@ class TurtleBotNavEnv(gym.Env):
         # self._print_and_log(f"Action received: {action}")
 
         linear, angular = action
+        # Clip linear and angular velocities to safety limits (ensure robot never exceeds limits)
+        linear = float(np.clip(linear, self.MIN_LINEAR_VEL, self.MAX_LINEAR_VEL))
+        angular = float(np.clip(angular, self.MIN_ANGULAR_VEL, self.MAX_ANGULAR_VEL))
         msg.twist.linear.x = float(linear)
         msg.twist.angular.z = float(angular)
 
@@ -269,16 +282,16 @@ class TurtleBotNavEnv(gym.Env):
         
         # Combine LiDAR data with robot state
         combined_state = np.concatenate([lidar_data, robot_state])
-        # self._print_and_log(f"State: distance_to_goal={distance_to_goal}, angle_to_goal={angle_to_goal}, prev_linear_vel={self.prev_linear_vel}, prev_angular_vel={self.prev_angular_vel}")
+        self._print_and_log(f"State: prev_linear_vel={self.prev_linear_vel}, prev_angular_vel={self.prev_angular_vel}")
         return combined_state
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            target_reward = 200.0
+            target_reward = 20.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -100.0
+            collision_reward = -10.0
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
         else:
@@ -288,7 +301,7 @@ class TurtleBotNavEnv(gym.Env):
             # 奖励参数 - 调整后的版本
             alpha = 200.0  # 增加正向奖励，让靠近目标更有吸引力
             beta = 150.0   # 适度惩罚远离目标的行为
-            step_penalty_coef = 0.05
+            step_penalty_coef = 0.06
             orientation_scale = 0.2   
 
             # === 距离改进奖励/惩罚 ===
@@ -319,7 +332,7 @@ class TurtleBotNavEnv(gym.Env):
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
             angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
 
-            velocity_reward = linear_vel * 0.35 - abs(angular_vel) * 0.1  # 鼓励前进，适度惩罚旋转
+            velocity_reward = max(0,linear_vel) * 0.3 - abs(angular_vel) * 0.08 # 鼓励前进，适度惩罚旋转
 
             
             # === 计算总奖励 ===

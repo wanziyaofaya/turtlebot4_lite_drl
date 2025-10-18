@@ -100,9 +100,9 @@ class TurtleBotRLNode(Node):
                     "MlpPolicy", 
                     self.env, 
                     verbose=1,
-                    device='cuda',
+                    device='cpu',
                     tensorboard_log=self.tensorboard_log,
-                    learning_rate=3e-4,  
+                    learning_rate=5e-4,  
                     n_steps=1024,  
                     batch_size=256,  
                     n_epochs=10,
@@ -118,7 +118,7 @@ class TurtleBotRLNode(Node):
                     )
                 )
             else:
-                model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1, device='cuda', tensorboard_log=self.tensorboard_log)
+                model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1, device='cpu', tensorboard_log=self.tensorboard_log)
         return model
 
     def train_and_evaluate(self):
