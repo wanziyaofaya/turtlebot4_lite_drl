@@ -282,7 +282,6 @@ class TurtleBotNavEnv(gym.Env):
         
         # Combine LiDAR data with robot state
         combined_state = np.concatenate([lidar_data, robot_state])
-        self._print_and_log(f"State: prev_linear_vel={self.prev_linear_vel}, prev_angular_vel={self.prev_angular_vel}")
         return combined_state
 
     def _calculate_reward(self, target, collision, min_laser):
