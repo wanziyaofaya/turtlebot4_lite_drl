@@ -2,17 +2,13 @@ import gymnasium as gym
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import TwistStamped, TransformStamped
+from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Pose
-from gz.transport14 import Node as GzNode
-from gz.msgs11.pose_pb2 import Pose as GzPose
+from gz.transport14 import Node
+from gz.msgs11.pose_pb2 import Pose
 from gz.msgs11.boolean_pb2 import Boolean
-from gz.msgs11.pose_v_pb2 import Pose_V
-import tf2_ros
-import tf2_geometry_msgs
-from tf2_ros import Buffer, TransformListener
 import time
 import math
 import tf_transformations
@@ -52,24 +48,7 @@ class TurtleBotNavEnv(gym.Env):
         # Pub/Sub
         self.cmd_vel_pub = self.node.create_publisher(TwistStamped, '/cmd_vel', 10)
         self.scan_sub = self.node.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
-        
-        # Gazebo Transport Node for getting model pose directly
-        self.gz_node = GzNode()
-        self.robot_model_name = 'turtlebot4'
-        
-        # Subscribe to model pose topic  
-        self.model_pose_topic = f"/model/{self.robot_model_name}/pose"
-        success = self.gz_node.subscribe(Pose_V, self.model_pose_topic, self._gz_pose_callback)
-        if not success:
-            self._print_and_log(f"Failed to subscribe to {self.model_pose_topic}")
-        
-        # TF2 Buffer and Listener for coordinate transformations
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self.node)
-        
-        # Environment coordinate frame (you can customize this)
-        self.env_frame_id = 'env_frame'
-        self.gazebo_world_frame_id = 'world'
+        self.odom_sub = self.node.create_subscription(Odometry, '/odom', self.odom_callback, 10)
 
         # State
         self.lidar_data = None
@@ -89,18 +68,17 @@ class TurtleBotNavEnv(gym.Env):
         self.stationary_threshold = 0.01  # Threshold to consider the robot as stationary
         self.max_stationary_steps = 100  # Maximum allowed stationary steps before penalty
 
-        # Gazebo model state tracking
-        self.gazebo_position = None
-        self.gazebo_orientation = None
-        self.model_state_received = False
+        # Odometry calibration
+        self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
+        self.odom_calibrated = False
+        self.yaw_offset = 0.0
 
         # Previous velocities for robot state
         self.prev_linear_vel = 0.0
         self.prev_angular_vel = 0.0
 
         self._reset_robot_position()
-        self._wait_for_model_state()
-        self._print_and_log(f"TurtleBotNavEnv initialized with Gazebo model state tracking")
+        self._print_and_log(f"TurtleBotNavEnv initialized ")
 
     def scan_callback(self, msg):
         """Updates state with current scan data."""
@@ -108,115 +86,44 @@ class TurtleBotNavEnv(gym.Env):
         # Replace inf values with the maximum LiDAR range (12.0m)
         self.lidar_data[np.isinf(self.lidar_data)] = 12.0
 
-    def _gz_pose_callback(self, msg):
-        """Callback for Gazebo pose topic - receives Pose_V message"""
-        try:
-            # Find the main robot pose (not link poses)
-            robot_pose = None
-            for pose in msg.pose:
-                # Look for the main robot entity pose
-                if pose.name == self.robot_model_name:
-                    robot_pose = pose
-                    break
-            
-            if robot_pose is not None:
-                # Store Gazebo position and orientation
-                self.gazebo_position = np.array([
-                    robot_pose.position.x,
-                    robot_pose.position.y,
-                    robot_pose.position.z
-                ], dtype=np.float32)
-                
-                self.gazebo_orientation = [
-                    robot_pose.orientation.x,
-                    robot_pose.orientation.y,
-                    robot_pose.orientation.z,
-                    robot_pose.orientation.w
-                ]
-                
-                # Convert to environment coordinates
-                self._update_env_position()
-                self.model_state_received = True
-                
-        except Exception as e:
-            self._print_and_log(f"Error in Gazebo pose callback: {e}")
+    def odom_callback(self, msg):
+        odom_x = msg.pose.pose.position.x
+        odom_y = msg.pose.pose.position.y
 
-    def _get_robot_pose_from_gazebo(self):
-        """Get robot pose directly from Gazebo using Gazebo Transport"""
-        try:
-            # Request pose from Gazebo
-            entity_name = self.robot_model_name
-            service_name = "/world/maze/pose/info"
-            
-            # Create request message
-            req = GzPose()
-            req.name = entity_name
-            
-            # Make synchronous service call with timeout
-            timeout_ms = 1000
-            result, response = self.gz_node.request(service_name, req, GzPose, GzPose, timeout_ms)
-            
-            if result and response:
-                # Store Gazebo position and orientation
-                self.gazebo_position = np.array([
-                    response.position.x,
-                    response.position.y,
-                    response.position.z
-                ], dtype=np.float32)
-                
-                self.gazebo_orientation = [
-                    response.orientation.x,
-                    response.orientation.y,
-                    response.orientation.z,
-                    response.orientation.w
-                ]
-                
-                # Convert to environment coordinates
-                self._update_env_position()
-                self.model_state_received = True
-                return True
-            else:
-                self._print_and_log(f"Failed to get pose for {entity_name}")
-                return False
-                
-        except Exception as e:
-            self._print_and_log(f"Error getting robot pose from Gazebo: {e}")
-            return False
+        odom_q = msg.pose.pose.orientation
+        _, _, odom_yaw = tf_transformations.euler_from_quaternion([
+            odom_q.x, odom_q.y, odom_q.z, odom_q.w
+        ])
 
-    def _update_env_position(self):
-        """Convert Gazebo coordinates to environment coordinates using TF transformation"""
-        if self.gazebo_position is None or self.gazebo_orientation is None:
+        if not self.odom_calibrated:
+            # 记录初始的 odom 姿态
+            self.initial_odom = np.array([odom_x, odom_y], dtype=np.float32)
+            self.initial_odom_yaw = odom_yaw
+
+            # Gazebo 设定的起点和朝向
+            self.start_yaw = -math.pi / 2  # Facing -y
+            self.start_position = np.array(self.start_position, dtype=np.float32)
+
+            # 计算旋转和平移偏移
+            self.yaw_offset = self.start_yaw - odom_yaw
+            self.translation_offset = self.start_position - self._rotate_2d(
+                np.array([odom_x, odom_y], dtype=np.float32),
+                self.yaw_offset
+            )
+
+            self.odom_calibrated = True
+            self.current_position = np.copy(self.start_position)
+            self.current_yaw = self.start_yaw
             return
-            
-        try:
-            # Create a pose in Gazebo world frame
-            gazebo_pose = TransformStamped()
-            gazebo_pose.header.stamp = self.node.get_clock().now().to_msg()
-            gazebo_pose.header.frame_id = self.gazebo_world_frame_id
-            gazebo_pose.child_frame_id = "robot_base"
-            
-            gazebo_pose.transform.translation.x = float(self.gazebo_position[0])
-            gazebo_pose.transform.translation.y = float(self.gazebo_position[1])
-            gazebo_pose.transform.translation.z = float(self.gazebo_position[2])
-            
-            gazebo_pose.transform.rotation.x = self.gazebo_orientation[0]
-            gazebo_pose.transform.rotation.y = self.gazebo_orientation[1]
-            gazebo_pose.transform.rotation.z = self.gazebo_orientation[2]
-            gazebo_pose.transform.rotation.w = self.gazebo_orientation[3]
-            
-            # For now, use direct mapping (you can customize this transformation)
-            # Environment coordinates = Gazebo coordinates (with potential custom transformation)
-            self.current_position = self.gazebo_position[:2].copy()  # Use only x, y
-            
-            # Calculate yaw from quaternion
-            _, _, yaw = tf_transformations.euler_from_quaternion(self.gazebo_orientation)
-            self.current_yaw = yaw
-            
-        except Exception as e:
-            self._print_and_log(f"Error in TF transformation: {e}")
-            # Fallback: use Gazebo coordinates directly
-            self.current_position = self.gazebo_position[:2].copy()
-            _, _, self.current_yaw = tf_transformations.euler_from_quaternion(self.gazebo_orientation)
+
+        rotated = self._rotate_2d(
+            np.array([odom_x, odom_y], dtype=np.float32),
+            self.yaw_offset
+        )
+        adjusted = rotated + self.translation_offset
+        self.current_position = adjusted
+
+        self.current_yaw = (odom_yaw + self.yaw_offset + math.pi) % (2 * math.pi) - math.pi
 
     def _rotate_2d(self, point, theta):
         """Rotate a 2D point by theta (radians)."""
@@ -244,10 +151,7 @@ class TurtleBotNavEnv(gym.Env):
 
         # Reset position in Gazebo
         self._reset_robot_position()
-        
-        # Wait for model state to be received
-        self._wait_for_model_state()
-        
+        self._calibrate_odom()
         # Reset state variables
         self.lidar_data = None
         self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
@@ -269,32 +173,32 @@ class TurtleBotNavEnv(gym.Env):
         self._take_action(action)
         self.last_action = action
 
-        # Wait for both model state and LiDAR to update
+        # Wait for both odom and LiDAR to update
         old_position = self.current_position.copy()
         old_lidar_id = id(self.lidar_data)
         start_time = time.time()
-        model_updated = False
+        odom_updated = False
         lidar_updated = False
         
         while (time.time() - start_time < self.max_wait_for_observation):
             rclpy.spin_once(self.node, timeout_sec=0.05)
             
-            # Check if model state has been updated via Gazebo topic callback
-            if not model_updated and not np.allclose(self.current_position, old_position, atol=1e-5):
-                model_updated = True
+            # Check if odometry has been updated
+            if not odom_updated and not np.allclose(self.current_position, old_position, atol=1e-5):
+                odom_updated = True
             
             # Check if LiDAR has been updated
             if not lidar_updated and id(self.lidar_data) != old_lidar_id:
                 lidar_updated = True
             
             # Break if both are updated
-            if model_updated and lidar_updated:
+            if odom_updated and lidar_updated:
                 break
         
         if not lidar_updated:
             raise RuntimeError("No LiDAR data received after step timeout.")
-        if not model_updated:
-            self._print_and_log("Warning: Model state may not have been updated after action.")
+        if not odom_updated:
+            self._print_and_log("Warning: Odometry data may not have been updated after action.")
 
         # Get current state
         done, collision, min_lidar = self._is_collision()
@@ -382,11 +286,11 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            target_reward = 200.0
+            target_reward = 20.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -100.0
+            collision_reward = -10.0
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
         else:
@@ -394,10 +298,10 @@ class TurtleBotNavEnv(gym.Env):
             distance_improvement = self.last_distance_to_goal - distance_to_goal
             
             # 奖励参数 - 调整后的版本
-            alpha = 80.0  # 增加正向奖励，让靠近目标更有吸引力
-            beta = 80.0   # 适度惩罚远离目标的行为
-            step_penalty_coef = 0.2
-            orientation_scale = 0.06 
+            alpha = 200.0  # 增加正向奖励，让靠近目标更有吸引力
+            beta = 150.0   # 适度惩罚远离目标的行为
+            step_penalty_coef = 0.06
+            orientation_scale = 0.2   
 
             # === 距离改进奖励/惩罚 ===
             distance_reward = 0.0
@@ -426,22 +330,21 @@ class TurtleBotNavEnv(gym.Env):
             # 改进的速度奖励：更合理的速度激励
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
             angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
-
-            velocity_reward = max(0,linear_vel) * 0.3 - abs(angular_vel) * 0.05
+            velocity_reward = max(0,linear_vel) * 0.3 - abs(angular_vel) * 0.08 # 鼓励前进，适度惩罚旋转
             
             # === 计算总奖励 ===
             total_reward = (distance_reward - step_penalty - obstacle_penalty + velocity_reward)
 
             # 打印详细的奖励分解
-            self._print_and_log(
-                f"📊 REWARD BREAKDOWN: "
-                f"distance={distance_reward:+.3f} | "
-                f"step=-{step_penalty:.3f} | "
-                f"obstacle=-{obstacle_penalty:.3f} | "
-                # f"orientation={orientation_reward:.3f} | "
-                f"velocity={velocity_reward:+.3f} | "
-                f"TOTAL={total_reward:+.2f}"
-            )
+            # self._print_and_log(
+            #     f"📊 REWARD BREAKDOWN: "
+            #     f"distance={distance_reward:+.3f} | "
+            #     f"step=-{step_penalty:.3f} | "
+            #     f"obstacle=-{obstacle_penalty:.3f} | "
+            #     f"orientation={orientation_reward:.3f} | "
+            #     f"velocity={velocity_reward:+.3f} | "
+            #     f"TOTAL={total_reward:+.2f}"
+            # )
             
             # 打印状态信息
             # self._print_and_log(
@@ -515,9 +418,10 @@ class TurtleBotNavEnv(gym.Env):
 
     def _reset_robot_position(self):
         """
-        Reset the robot's position using Gazebo transport.
+        Reset the robot's position and synchronize odometry.
         """
-        pose_msg = GzPose()
+        node = Node()
+        pose_msg = Pose()
         pose_msg.name = "turtlebot4"
         pose_msg.position.x = float(self.start_position[0])
         pose_msg.position.y = float(self.start_position[1])
@@ -532,50 +436,37 @@ class TurtleBotNavEnv(gym.Env):
         service_name = "/world/maze/set_pose"
         timeout_ms = 1000
 
-        self._print_and_log(f"Resetting robot to position: x={self.start_position[0]}, y={self.start_position[1]}")
-
         try:
-            result, response = self.gz_node.request(service_name, pose_msg, GzPose, Boolean, timeout_ms)
-            if result and response and response.data:
-                self._print_and_log("Robot position reset successfully")
-            else:
-                self._print_and_log(f"Position reset failed: result={result}, response.data={response.data if response else 'None'}")
-                # Don't raise exception, just warn - position tracking will still work
-                self._print_and_log("Continuing with Gazebo model state tracking...")
+            result, response = node.request(service_name, pose_msg, Pose, Boolean, timeout_ms)
+            if not response.data:
+                raise RuntimeError("Failed to reset the robot position.")
         except Exception as e:
-            self._print_and_log(f"Service call failed: {e}")
-            self._print_and_log("Continuing with Gazebo model state tracking...")
+            raise RuntimeError(f"Service call failed: {e}")
 
         time.sleep(0.5)
 
-    def _wait_for_model_state(self):
-        """Wait for initial model state from Gazebo topic."""
-        self.model_state_received = False
-        
-        self._print_and_log("Waiting for initial model state from Gazebo topic...")
+        self._calibrate_odom()
+
+    def _calibrate_odom(self):
+        """Spinlock until odometry callback received to determine correct offsets to use."""
+        self.odom_calibrated = False
+        self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
+        self.yaw_offset = 0.0
+
+        # self._print_and_log("Calibrating odometry offsets...")
 
         start_time = time.time()
-        timeout = 5.0  # seconds
+        timeout = 3.0  # seconds
 
-        while not self.model_state_received and (time.time() - start_time) < timeout:
-            # Allow Gazebo transport to process messages
-            time.sleep(0.1)
-            
-        if not self.model_state_received:
-            raise RuntimeError("Model state reception timed out.")
+        while not self.odom_calibrated and (time.time() - start_time) < timeout:
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+        if not self.odom_calibrated:
+            raise RuntimeError("Odometry calibration timed out.")
 
     def _print_and_log(self, message):
         self.node.get_logger().info(message)
 
     def close(self):
         self._send_stop_command()
-        # Unsubscribe from Gazebo topic if needed
-        try:
-            if hasattr(self, 'gz_node'):
-                # Note: gz.transport doesn't have explicit unsubscribe, 
-                # the node cleanup handles it
-                pass
-        except:
-            pass
         self.node.destroy_node()
         rclpy.shutdown()
