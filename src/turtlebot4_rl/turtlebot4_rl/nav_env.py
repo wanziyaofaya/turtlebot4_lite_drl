@@ -139,7 +139,7 @@ class TurtleBotNavEnv(gym.Env):
                 self.model_state_received = True
                 
         except Exception as e:
-            self._print_and_log(f"Error in Gazebo pose callback: {e}")
+            pass
 
     def _get_robot_pose_from_gazebo(self):
         """Get robot pose directly from Gazebo using Gazebo Transport"""
@@ -188,35 +188,10 @@ class TurtleBotNavEnv(gym.Env):
         if self.gazebo_position is None or self.gazebo_orientation is None:
             return
             
-        try:
-            # Create a pose in Gazebo world frame
-            gazebo_pose = TransformStamped()
-            gazebo_pose.header.stamp = self.node.get_clock().now().to_msg()
-            gazebo_pose.header.frame_id = self.gazebo_world_frame_id
-            gazebo_pose.child_frame_id = "robot_base"
+        self.current_position = self.gazebo_position[:2].copy()  # Use only x, y
             
-            gazebo_pose.transform.translation.x = float(self.gazebo_position[0])
-            gazebo_pose.transform.translation.y = float(self.gazebo_position[1])
-            gazebo_pose.transform.translation.z = float(self.gazebo_position[2])
-            
-            gazebo_pose.transform.rotation.x = self.gazebo_orientation[0]
-            gazebo_pose.transform.rotation.y = self.gazebo_orientation[1]
-            gazebo_pose.transform.rotation.z = self.gazebo_orientation[2]
-            gazebo_pose.transform.rotation.w = self.gazebo_orientation[3]
-            
-            # For now, use direct mapping (you can customize this transformation)
-            # Environment coordinates = Gazebo coordinates (with potential custom transformation)
-            self.current_position = self.gazebo_position[:2].copy()  # Use only x, y
-            
-            # Calculate yaw from quaternion
-            _, _, yaw = tf_transformations.euler_from_quaternion(self.gazebo_orientation)
-            self.current_yaw = yaw
-            
-        except Exception as e:
-            self._print_and_log(f"Error in TF transformation: {e}")
-            # Fallback: use Gazebo coordinates directly
-            self.current_position = self.gazebo_position[:2].copy()
-            _, _, self.current_yaw = tf_transformations.euler_from_quaternion(self.gazebo_orientation)
+        # Calculate yaw from quaternion
+        _, _, self.current_yaw = tf_transformations.euler_from_quaternion(self.gazebo_orientation)
 
     def _rotate_2d(self, point, theta):
         """Rotate a 2D point by theta (radians)."""
@@ -382,22 +357,22 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            target_reward = 200.0
+            target_reward = 450.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -100.0
+            collision_reward = -450.0
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
         else:
             distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
             distance_improvement = self.last_distance_to_goal - distance_to_goal
             
-            # 奖励参数 - 调整后的版本
-            alpha = 80.0  # 增加正向奖励，让靠近目标更有吸引力
-            beta = 80.0   # 适度惩罚远离目标的行为
+            # 奖励参数
+            alpha = 60.0  # 增加正向奖励，让靠近目标更有吸引力
+            beta = 60.0   # 适度惩罚远离目标的行为
             step_penalty_coef = 0.2
-            orientation_scale = 0.06 
+            orientation_scale = 0.1
 
             # === 距离改进奖励/惩罚 ===
             distance_reward = 0.0
@@ -427,8 +402,7 @@ class TurtleBotNavEnv(gym.Env):
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
             angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
 
-            velocity_reward = max(0,linear_vel) * 0.3 - abs(angular_vel) * 0.05
-            
+            velocity_reward = max(0, linear_vel) * 0.3 - angular_vel * 0.1
             # === 计算总奖励 ===
             total_reward = (distance_reward - step_penalty - obstacle_penalty + velocity_reward)
 
@@ -442,21 +416,9 @@ class TurtleBotNavEnv(gym.Env):
                 f"velocity={velocity_reward:+.3f} | "
                 f"TOTAL={total_reward:+.2f}"
             )
-            
-            # 打印状态信息
-            # self._print_and_log(
-            #     f"📍 STATE INFO: "
-            #     f"dist_to_goal={distance_to_goal:.3f}m | "
-            #     f"improvement={distance_improvement:+.4f}m | "
-            #     f"min_laser={min_laser:.3f}m | "
-            #     f"stationary_steps={self.stationary_steps} | "
-            #     f"yaw_diff={abs(yaw_diff)*180/math.pi:.1f}° | "
-            #     f"vel=[{linear_vel:.2f}, {angular_vel:.2f}]"
-            # )
 
             # === 更新状态 ===
             self.previous_position = np.copy(self.current_position)
-            # 注意：last_distance_to_goal 现在在 step() 方法开始时更新
             return total_reward
 
     def _count_oscillations(self):
