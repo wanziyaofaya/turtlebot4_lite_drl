@@ -23,7 +23,7 @@ def test_model(model_path, algorithm='PPO', episodes=10, min_distance=2.0):
     map_bounds = {'x_min': -2.5, 'x_max': 2.5, 'y_min': -2.5, 'y_max': 2.5}
 
     # 初始化环境
-    env = TurtleBotNavEnv(np.array([0.0, 0.0], dtype=np.float32), np.array([5.0, 5.0], dtype=np.float32))
+    env = TurtleBotNavEnv(np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32))
 
     # 加载模型
     algorithms = {'PPO': PPO, 'DQN': DQN, 'SAC': SAC}

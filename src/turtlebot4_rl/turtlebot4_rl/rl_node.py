@@ -74,7 +74,7 @@ class TurtleBotRLNode(Node):
                 goal_pos = np.array([goal_x, goal_y], dtype=np.float32)
                 return start_pos, goal_pos
         self.get_logger().warning("Could not generate valid random positions, using fallback positions")
-        return np.array([0.0, 0.0], dtype=np.float32), np.array([5.0, 5.0], dtype=np.float32)
+        return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
     def _load_algorithm(self, algorithm_name, model_path):
         """Load or initialize the RL model based on the specified algorithm."""
