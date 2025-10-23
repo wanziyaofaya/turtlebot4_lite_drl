@@ -32,7 +32,7 @@ def generate_subgoal_dataset(env, model_dir, num_samples=3000, output_file='subg
     生成子目标点数据集，每条数据包括：起点、终点、子目标点、激光信息。
     """
     from turtlebot4_rl.astar import astar
-    map_bounds = {'x_min': -2.5, 'x_max': 2.5, 'y_min': -2.5, 'y_max': 2.5}
+    map_bounds = {'x_min': -1.5, 'x_max': 1.5, 'y_min': -1.5, 'y_max': 1.5}
     dataset_path = os.path.join(model_dir, output_file)
     with open(dataset_path, 'w') as f:
         f.write('start_x,start_y,goal_x,goal_y,subgoal_x,subgoal_y,lidar_0,...,lidar_639\n')
