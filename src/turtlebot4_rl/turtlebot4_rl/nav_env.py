@@ -328,14 +328,14 @@ class TurtleBotNavEnv(gym.Env):
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
 
         # 添加详细调试信息 - 所有坐标均为环境坐标系
-        # self._print_and_log(
-        #     f"🔍 状态: "
-        #     f"起始=[{self.start_position[0]:.3f}, {self.start_position[1]:.3f}] | "
-        #     f"目标=[{self.goal_position[0]:.3f}, {self.goal_position[1]:.3f}] | "
-        #     f"当前=[{self.current_position[0]:.3f}, {self.current_position[1]:.3f}] | "
-            # f"距离目标={distance_to_goal:.3f}m | "
-        #     f"改进={self.last_distance_to_goal - distance_to_goal:+.3f}m | "
-        # )
+        self._print_and_log(
+            f"🔍状态: "
+            f"起始=[{self.start_position[0]:.3f}, {self.start_position[1]:.3f}] | "
+            f"目标=[{self.goal_position[0]:.3f}, {self.goal_position[1]:.3f}] | "
+            f"当前=[{self.current_position[0]:.3f}, {self.current_position[1]:.3f}] | "
+            f"距离目标={distance_to_goal:.3f}m | "
+            f"改进={self.last_distance_to_goal - distance_to_goal:+.3f}m | "
+        )
         
         # Calculate angle to goal relative to robot's current orientatilobal = np.arctan2(goal_vector[1], goal_vector[0])
         goal_vector = self.goal_position - self.current_position
@@ -371,7 +371,7 @@ class TurtleBotNavEnv(gym.Env):
             # 奖励参数
             alpha = 80.0  # 增加正向奖励，让靠近目标更有吸引力
             beta = 80.0   # 适度惩罚远离目标的行为
-            step_penalty_coef = 0.05
+            step_penalty_coef = 0.25
             orientation_scale = 0.1
 
             # === 距离改进奖励/惩罚 ===

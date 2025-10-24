@@ -102,14 +102,14 @@ class TurtleBotRLNode(Node):
                     verbose=1,
                     device='cpu',
                     tensorboard_log=self.tensorboard_log,
-                    learning_rate=5e-4,  
+                    learning_rate=1e-4,  
                     n_steps=1024,  
                     batch_size=256,  
                     n_epochs=10,
                     gamma=0.98,
                     gae_lambda=0.95,
                     clip_range=0.2,
-                    ent_coef=0.03,
+                    ent_coef=0.01,
                     vf_coef=0.5,
                     max_grad_norm=0.5,  # 添加梯度裁剪
                     policy_kwargs=dict(

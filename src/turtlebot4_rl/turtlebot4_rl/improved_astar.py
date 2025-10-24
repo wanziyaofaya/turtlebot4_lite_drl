@@ -1,16 +1,49 @@
-
 import heapq
+import numpy as np
 from collision import point_in_obstacle
 
+def is_obstacle_free(start, end, step_size=0.01):
+    """检查从start到end的直线路径上是否有障碍物"""
+    dist = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
+    steps = int(dist / step_size)
+    for i in range(steps + 1):
+        t = i / steps
+        x = start[0] + t * (end[0] - start[0])
+        y = start[1] + t * (end[1] - start[1])
+        if point_in_obstacle(x, y):
+            return False
+    return True
 
-def astar(start, goal, resolution=0.01):
-    """
-    双向A*寻路算法，障碍物由collision.py定义，网格分辨率为resolution。
-    start, goal: (x, y) 坐标
-    返回路径列表 [(x0, y0), (x1, y1), ...]
-    """
+def remove_redundant_nodes(path):
+            if len(path) < 2:
+                return path
+            simplified_path = [path[0]]  # 保留起点
+            for i in range(1, len(path) - 1):
+                start = simplified_path[-1]
+                end = path[i + 1]
+                # 检查从start到end的连线是否无障碍
+                if is_obstacle_free(start, end):
+                    continue  # True,无障碍，中间节点冗余，跳过
+                else:
+                    simplified_path.append(path[i])  # False,保留当前节点
+            simplified_path.append(path[-1])  # 保留终点
+            return simplified_path
+
+def astar(start, goal, resolution=0.01, env=None):
+    if env is None or env.lidar_data is None:
+        raise ValueError("Environment with valid LiDAR data is required to calculate obstacle density.")
+
+    # Calculate obstacle density (p value)
+    lidar_data = env.lidar_data
+    obstacle_count = np.sum((lidar_data >= 0) & (lidar_data <= 0.85))
+    p = obstacle_count / len(lidar_data)
+
+    k = 2
+
     def heuristic(a, b):
-        return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+        original_heuristic = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+        heuristic = (1 + k * p) * original_heuristic
+        return heuristic
 
     def to_grid(p):
         return (int(round(p[0] / resolution)), int(round(p[1] / resolution)))
@@ -103,6 +136,8 @@ def astar(start, goal, resolution=0.01):
         node = came_from_bwd.get(node, None)
 
     full_path = [from_grid(p) for p in path_fwd + path_bwd]
-    return full_path
+    new_path = remove_redundant_nodes(full_path)
+    return new_path
 
 
+# 调用的时候要写path = astar(start, goal, resolution=0.01, env=env)

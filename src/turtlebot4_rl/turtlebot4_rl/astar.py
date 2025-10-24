@@ -2,7 +2,7 @@ import heapq
 from collision import point_in_obstacle
 
 
-def astar(start, goal, resolution=0.01):
+def astar(start, goal, resolution=0.01, env=None):
     """
     A*寻路算法，障碍物由collision.py定义，网格分辨率为resolution。
     start, goal: (x, y) 坐标
