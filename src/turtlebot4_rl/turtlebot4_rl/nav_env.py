@@ -357,11 +357,11 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            target_reward = 150.0
+            target_reward = 120.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -150.0
+            collision_reward = -100.0
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
         else:
@@ -375,7 +375,7 @@ class TurtleBotNavEnv(gym.Env):
             self._print_and_log(f"distance_improvement = {distance_improvement:.4f}")
 
             # 奖励参数
-            alpha = 60.0  # 增加正向奖励，让靠近目标更有吸引力
+            alpha = 80.0  # 增加正向奖励，让靠近目标更有吸引力
             beta = 60.0   # 适度惩罚远离目标的行为
             step_penalty_coef = 0.06
 
@@ -401,12 +401,12 @@ class TurtleBotNavEnv(gym.Env):
             velocity_reward = max(0, linear_vel) * 0.08 - angular_vel * 0.05
 
             # === 计算总奖励 ===
-            total_reward = (distance_reward - step_penalty - obstacle_penalty + velocity_reward + goal_reward)
+            total_reward = (distance_reward - step_penalty - obstacle_penalty + velocity_reward)
 
             # 打印详细的奖励分解
             self._print_and_log(
                 f"📊 REWARD: "
-                f"goal={goal_reward:+.3f} | "
+                # f"goal={goal_reward:+.3f} | "
                 f"distance={distance_reward:+.3f} | "
                 f"step=-{step_penalty:.3f} | "
                 f"obstacle=-{obstacle_penalty:.3f} | "
