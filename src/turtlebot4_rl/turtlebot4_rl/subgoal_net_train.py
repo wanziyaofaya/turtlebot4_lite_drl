@@ -1,7 +1,8 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 
 class SubgoalDataset(Dataset):
     def __init__(self, file_path):
@@ -40,28 +41,83 @@ class SubgoalNet(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-def train_subgoal_net(dataset_path, epochs=50, batch_size=32, lr=1e-3, model_save_path='subgoal_net.pth'):
+def train_subgoal_net(dataset_path, epochs=200, batch_size=32, lr=1e-3,
+                      model_save_path='subgoal_net.pth', train_ratio=0.8, patience=10):
+    # 设备
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     dataset = SubgoalDataset(dataset_path)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    model = SubgoalNet()
+    if len(dataset) < 2:
+        raise ValueError("数据集太小，无法拆分训练/验证集")
+
+    # 拆分训练/验证集
+    train_len = int(len(dataset) * train_ratio)
+    # 保证至少有一个样本在验证集中
+    if train_len >= len(dataset):
+        train_len = len(dataset) - 1
+    val_len = len(dataset) - train_len
+    train_ds, val_ds = random_split(dataset, [train_len, val_len])
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+
+    model = SubgoalNet().to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+
+    best_val = float('inf')
+    wait = 0
+
+    # 确保保存路径目录存在
+    save_dir = os.path.dirname(model_save_path)
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+
     for epoch in range(epochs):
         model.train()
         total_loss = 0.0
-        for x, y in dataloader:
+        for x, y in train_loader:
+            x = x.to(device)
+            y = y.to(device)
             optimizer.zero_grad()
             pred = model(x)
             loss = criterion(pred, y)
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * x.size(0)
-        avg_loss = total_loss / len(dataset)
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.6f}")
-    torch.save(model.state_dict(), model_save_path)
-    print(f"Model saved to {model_save_path}")
+        train_loss = total_loss / len(train_ds)
+
+        # 验证
+        model.eval()
+        val_loss_sum = 0.0
+        with torch.no_grad():
+            for xv, yv in val_loader:
+                xv = xv.to(device)
+                yv = yv.to(device)
+                pv = model(xv)
+                val_loss_sum += criterion(pv, yv).item() * xv.size(0)
+        val_loss = val_loss_sum / len(val_ds)
+
+        scheduler.step(val_loss)
+
+        print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+
+        # 早停与保存最佳模型
+        if val_loss < best_val:
+            best_val = val_loss
+            torch.save(model.state_dict(), model_save_path)
+            wait = 0
+            print(f"  Best model saved (val_loss={best_val:.6f}) -> {model_save_path}")
+        else:
+            wait += 1
+            if wait >= patience:
+                print(f"Early stopping (no improvement for {patience} epochs).")
+                break
+
+    print("Training finished.")
 
 if __name__ == '__main__':
-    train_subgoal_net('models/PPO/subgoal_dataset.txt', epochs=50, batch_size=32, lr=1e-3, model_save_path='models/PPO/subgoal_net.pth')
+    train_subgoal_net('models/PPO/subgoal_dataset.txt', epochs=200, batch_size=32, lr=1e-3, model_save_path='models/PPO/subgoal_net.pth')
 
 # python3 src/turtlebot4_rl/turtlebot4_rl/subgoal_net_train.py

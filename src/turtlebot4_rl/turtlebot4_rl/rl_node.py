@@ -72,7 +72,8 @@ class TurtleBotRLNode(Node):
             if distance >= self.min_distance:
                 start_pos = np.array([start_x, start_y], dtype=np.float32)
                 goal_pos = np.array([goal_x, goal_y], dtype=np.float32)
-                return start_pos, goal_pos
+                # return start_pos, goal_pos
+                return [-1.5, 1], [0.5, -1]
         self.get_logger().warning("Could not generate valid random positions, using fallback positions")
         return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
@@ -102,7 +103,7 @@ class TurtleBotRLNode(Node):
                     verbose=1,
                     device='cpu',
                     tensorboard_log=self.tensorboard_log,
-                    learning_rate=1e-4,  
+                    learning_rate=5e-4,  
                     n_steps=1024,  
                     batch_size=256,  
                     n_epochs=10,

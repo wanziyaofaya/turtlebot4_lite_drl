@@ -17,7 +17,7 @@ import tf_transformations
 GOAL_REACH_THRESHOLD = 0.3  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, start_position, goal_position, max_wait_for_observation=5.0):
+    def __init__(self, start_position, goal_position, max_wait_for_observation=50.0):
         super().__init__()
 
         if not rclpy.ok():
@@ -26,8 +26,8 @@ class TurtleBotNavEnv(gym.Env):
         self.node = rclpy.create_node('turtlebot_nav_env')
 
         # Velocity limits (use constants so clipping is consistent)
-        self.MAX_LINEAR_VEL = 0.3
-        self.MIN_LINEAR_VEL = -0.3
+        self.MAX_LINEAR_VEL = 3.0
+        self.MIN_LINEAR_VEL = -3.0
         self.MAX_ANGULAR_VEL = 1.5
         self.MIN_ANGULAR_VEL = -1.5
 
@@ -40,8 +40,8 @@ class TurtleBotNavEnv(gym.Env):
 
         # Continuous observation (LiDAR scans + robot state)
         self.observation_space = gym.spaces.Box(
-            low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -0.3, -1.5])]),
-            high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 0.3, 1.5])]),
+            low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -3.0, -1.5])]),
+            high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 3.0, 1.5])]),
             dtype=np.float32
         )
 
@@ -196,7 +196,7 @@ class TurtleBotNavEnv(gym.Env):
                 break
         
         if not lidar_updated:
-            raise RuntimeError("No LiDAR data received after step timeout.")
+            raise RuntimeError("No LiDAR data received.")
         if not odom_updated:
             self._print_and_log("Warning: Odometry data may not have been updated after action.")
 
