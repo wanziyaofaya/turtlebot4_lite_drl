@@ -103,14 +103,14 @@ class TurtleBotRLNode(Node):
                     verbose=1,
                     device='cpu',
                     tensorboard_log=self.tensorboard_log,
-                    learning_rate=5e-4,  
+                    learning_rate=1e-4,  
                     n_steps=1024,  
                     batch_size=256,  
                     n_epochs=10,
-                    gamma=0.98,
+                    gamma=0.99,
                     gae_lambda=0.95,
                     clip_range=0.2,
-                    ent_coef=0.01,
+                    ent_coef=0.001,
                     vf_coef=0.5,
                     max_grad_norm=0.5,  # 添加梯度裁剪
                     policy_kwargs=dict(
@@ -142,8 +142,8 @@ class TurtleBotRLNode(Node):
             self.get_logger().info(f"Game {game}: Training for {max_steps} timesteps...")
             self.model.learn(total_timesteps=max_steps, reset_num_timesteps=False, callback=[success_rate_callback])
 
-            # 每20个episode保存一次模型
-            if game % 20 == 0:
+            # 每1个episode保存一次模型
+            if game % 1 == 0:
                 model_save_path = os.path.join(
                     self.model_dir, 
                     f"{self.algorithm}_{training_session}_checkpoint_ep{game:03d}_ts{max_steps}.zip"
@@ -151,8 +151,8 @@ class TurtleBotRLNode(Node):
                 self.model.save(model_save_path)
                 self.get_logger().info(f"Model checkpoint saved after episode {game}: {model_save_path}")
 
-        # 如果最后的episode不是20的倍数，或者要保存最终模型
-        if num_games % 20 != 0:
+        # 如果最后的episode不是1的倍数，或者要保存最终模型
+        if num_games % 1 != 0:
             final_model_path = os.path.join(
                 self.model_dir, 
                 f"{self.algorithm}_{training_session}_FINAL_ep{num_games:03d}_ts{max_steps}.zip"

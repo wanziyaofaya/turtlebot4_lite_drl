@@ -32,8 +32,8 @@ class TurtleBotNavEnv(gym.Env):
         # Velocity limits (use constants so clipping is consistent)
         self.MAX_LINEAR_VEL = 3.0
         self.MIN_LINEAR_VEL = -3.0
-        self.MAX_ANGULAR_VEL = 1.5
-        self.MIN_ANGULAR_VEL = -1.5
+        self.MAX_ANGULAR_VEL = 1.9
+        self.MIN_ANGULAR_VEL = -1.9
 
         # Define action spaces
         self.action_space = gym.spaces.Box(
@@ -44,8 +44,8 @@ class TurtleBotNavEnv(gym.Env):
 
         # Continuous observation (LiDAR scans + robot state)
         self.observation_space = gym.spaces.Box(
-            low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -3.0, -1.5])]),
-            high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 3.0, 1.5])]),
+            low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -3.0, -1.9])]),
+            high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 3.0, 1.9])]),
             dtype=np.float32
         )
 
@@ -357,7 +357,7 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            target_reward = 120.0
+            target_reward = 100.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
@@ -366,18 +366,18 @@ class TurtleBotNavEnv(gym.Env):
             return collision_reward
         else:
             distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-            if distance_to_goal <= 0.5:
-                goal_reward = 0.25 * (1.0 - np.tanh(2.0 * (distance_to_goal - 0.2)))
-            else:
-                goal_reward = 0.0
+            # if distance_to_goal <= 0.5:
+            #     goal_reward = 0.25 * (1.0 - np.tanh(2.0 * (distance_to_goal - 0.2)))
+            # else:
+            #     goal_reward = 0.0
 
             distance_improvement = self.last_distance_to_goal - distance_to_goal
-            self._print_and_log(f"distance_improvement = {distance_improvement:.4f}")
+            # self._print_and_log(f"distance_improvement = {distance_improvement:.4f}")
 
             # 奖励参数
-            alpha = 80.0  # 增加正向奖励，让靠近目标更有吸引力
-            beta = 60.0   # 适度惩罚远离目标的行为
-            step_penalty_coef = 0.06
+            alpha = 20.0  # 增加正向奖励，让靠近目标更有吸引力
+            beta = 20.0   # 适度惩罚远离目标的行为
+            step_penalty_coef = 0.03
 
             # === 距离改进奖励/惩罚 ===
             distance_reward = 0.0
@@ -398,10 +398,10 @@ class TurtleBotNavEnv(gym.Env):
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
             angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
 
-            velocity_reward = max(0, linear_vel) * 0.08 - angular_vel * 0.05
+            velocity_reward = linear_vel * 0.01 - angular_vel * 0.008
 
             # === 计算总奖励 ===
-            total_reward = (distance_reward - step_penalty - obstacle_penalty + velocity_reward)
+            total_reward = (distance_reward - step_penalty + velocity_reward - obstacle_penalty)
 
             # 打印详细的奖励分解
             self._print_and_log(
