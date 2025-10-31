@@ -44,10 +44,10 @@ class SuccessRateCallback(BaseCallback):
         collision_rate = (self.episode_collision_count / self.episode_game_count) if self.episode_game_count > 0 else 0.0
 
         # Log success rate to TensorBoard at every step
-        self.writer.add_scalar('SuccessRate/Timesteps', success_rate, self.total_timesteps)
+        # self.writer.add_scalar('SuccessRate/Timesteps', success_rate, self.total_timesteps)
         
         # Log collision rate to TensorBoard at every step
-        self.writer.add_scalar('CollisionRate/Timesteps', collision_rate, self.total_timesteps)
+        # self.writer.add_scalar('CollisionRate/Timesteps', collision_rate, self.total_timesteps)
         
         # 每个episode结束时记录累积成功次数和碰撞次数
         if self.locals['dones'][0]:
