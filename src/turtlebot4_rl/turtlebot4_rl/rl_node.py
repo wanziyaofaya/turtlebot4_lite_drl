@@ -91,6 +91,14 @@ class TurtleBotRLNode(Node):
         if model_path and os.path.isfile(model_path):
             self.get_logger().info(f"Loading pre-trained model from {model_path}")
             model = algorithms[algorithm_name].load(model_path, env=self.env, tensorboard_log=self.tensorboard_log)
+            new_lr = 3e-5 
+            self.get_logger().info(f"Overriding learning rate to {new_lr}")
+            model.learning_rate = new_lr
+
+            # 立即让optimizer使用新的 lr
+            if hasattr(model, 'policy') and hasattr(model.policy, 'optimizer'):
+                for param_group in model.policy.optimizer.param_groups:
+                    param_group['lr'] = new_lr
         else:
             if model_path:
                 self.get_logger().warning(f"Model path {model_path} not found. Initializing a new model.")
@@ -160,7 +168,7 @@ class TurtleBotRLNode(Node):
             self.model.save(final_model_path)
             self.get_logger().info(f"Final model saved: {final_model_path}")
         else:
-            # 如果最后的episode正好是10的倍数，重命名最后保存的模型为FINAL
+            # 如果最后的episode正好是1的倍数，重命名最后保存的模型为FINAL
             last_checkpoint = os.path.join(
                 self.model_dir, 
                 f"{self.algorithm}_{training_session}_checkpoint_ep{num_games:03d}_ts{max_steps}.zip"
