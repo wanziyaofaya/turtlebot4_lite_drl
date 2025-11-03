@@ -1,17 +1,12 @@
 import gymnasium as gym
 import numpy as np
 import rclpy
-from rclpy.node import Node
-from geometry_msgs.msg import TwistStamped, TransformStamped
-from nav_msgs.msg import Odometry
+from geometry_msgs.msg import TwistStamped
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Pose
 from gz.transport14 import Node as GzNode
 from gz.msgs11.pose_pb2 import Pose as GzPose
 from gz.msgs11.boolean_pb2 import Boolean
 from gz.msgs11.pose_v_pb2 import Pose_V
-import tf2_ros
-import tf2_geometry_msgs
 from tf2_ros import Buffer, TransformListener
 import time
 import math
@@ -229,6 +224,9 @@ class TurtleBotNavEnv(gym.Env):
         self.direction_history = []
         self.previous_position = np.copy(self.start_position)
 
+        self.prev_linear_vel = 0.0
+        self.prev_angular_vel = 0.0
+
         # Wait for initial observations
         if not self._wait_for_new_state():
             raise RuntimeError("No LiDAR data received after reset timeout.")
@@ -329,13 +327,13 @@ class TurtleBotNavEnv(gym.Env):
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
 
         # 添加详细调试信息 - 所有坐标均为环境坐标系
-        self._print_and_log(
-            f"🔍状态: "
-            f"起始=[{self.start_position[0]:.3f}, {self.start_position[1]:.3f}] | "
-            f"目标=[{self.goal_position[0]:.3f}, {self.goal_position[1]:.3f}] | "
-            f"当前=[{self.current_position[0]:.3f}, {self.current_position[1]:.3f}] | "
-            f"距离目标={distance_to_goal:.3f}m | "
-        )
+        # self._print_and_log(
+        #     f"🔍状态: "
+        #     f"起始=[{self.start_position[0]:.3f}, {self.start_position[1]:.3f}] | "
+        #     f"目标=[{self.goal_position[0]:.3f}, {self.goal_position[1]:.3f}] | "
+        #     f"当前=[{self.current_position[0]:.3f}, {self.current_position[1]:.3f}] | "
+        #     f"距离目标={distance_to_goal:.3f}m | "
+        # )
         
         # Calculate angle to goal relative to robot's current orientatilobal = np.arctan2(goal_vector[1], goal_vector[0])
         goal_vector = self.goal_position - self.current_position
@@ -378,6 +376,7 @@ class TurtleBotNavEnv(gym.Env):
             alpha = 20.0  # 增加正向奖励，让靠近目标更有吸引力
             beta = 20.0   # 适度惩罚远离目标的行为
             step_penalty_coef = 0.03
+            orientation_scale = 0.015
 
             # === 距离改进奖励/惩罚 ===
             distance_reward = 0.0
@@ -395,25 +394,33 @@ class TurtleBotNavEnv(gym.Env):
             # === 障碍物距离惩罚 ===
             obstacle_penalty = max(0, 1 - min_laser * 2.0) * 0.1
 
-            linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
-            angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
+            # === 朝向目标角度 ===
+            desired_yaw = math.atan2(
+                self.goal_position[1] - self.current_position[1],
+                self.goal_position[0] - self.current_position[0]
+            )
+            yaw_diff = self._angle_difference(self.current_yaw, desired_yaw)
+            orientation_reward = math.cos(yaw_diff) * orientation_scale
 
-            velocity_reward = linear_vel * 0.01 - angular_vel * 0.008
+            linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
+            # angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
+
+            velocity_reward = linear_vel * 0.01
 
             # === 计算总奖励 ===
-            total_reward = (distance_reward - step_penalty + velocity_reward - obstacle_penalty)
+            total_reward = (distance_reward - step_penalty + velocity_reward - obstacle_penalty + orientation_reward)
 
             # 打印详细的奖励分解
-            self._print_and_log(
-                f"📊 REWARD: "
-                # f"goal={goal_reward:+.3f} | "
-                f"distance={distance_reward:+.3f} | "
-                f"step=-{step_penalty:.3f} | "
-                f"obstacle=-{obstacle_penalty:.3f} | "
-                # f"orientation={orientation_reward:.3f} | "
-                f"velocity={velocity_reward:+.3f} | "
-                f"TOTAL={total_reward:+.2f}"
-            )
+            # self._print_and_log(
+            #     f"📊 REWARD: "
+            #     # f"goal={goal_reward:+.3f} | "
+            #     f"distance={distance_reward:+.3f} | "
+            #     f"step=-{step_penalty:.3f} | "
+            #     f"obstacle=-{obstacle_penalty:.3f} | "
+            #     f"orientation={orientation_reward:.3f} | "
+            #     f"velocity={velocity_reward:+.3f} | "
+            #     f"TOTAL={total_reward:+.2f}"
+            # )
             # === 更新状态 ===
             self.previous_position = np.copy(self.current_position)
             return total_reward
@@ -491,7 +498,7 @@ class TurtleBotNavEnv(gym.Env):
         service_name = "/world/maze/set_pose"
         timeout_ms = 1000
 
-        self._print_and_log(f"Resetting robot to position: x={self.start_position[0]}, y={self.start_position[1]}")
+        # self._print_and_log(f"Resetting robot to position: x={self.start_position[0]}, y={self.start_position[1]}")
 
         try:
             result, response = self.gz_node.request(service_name, pose_msg, GzPose, Boolean, timeout_ms)
@@ -511,7 +518,7 @@ class TurtleBotNavEnv(gym.Env):
         """Wait for initial model state from Gazebo topic."""
         self.model_state_received = False
         
-        self._print_and_log("Waiting for initial model state from Gazebo topic...")
+        # self._print_and_log("Waiting for initial model state from Gazebo topic...")
 
         start_time = time.time()
         timeout = 5.0  # seconds

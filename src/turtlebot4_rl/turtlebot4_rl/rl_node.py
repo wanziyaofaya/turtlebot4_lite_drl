@@ -17,6 +17,28 @@ import random
 from torch.utils.tensorboard import SummaryWriter
 from turtlebot4_rl.custom_callback import SuccessRateCallback
 
+class EntropyScheduleCallback(BaseCallback):
+    """动态调整 entropy coefficient 的回调函数"""
+    
+    def __init__(self, start_ent=0.003, end_ent=0.001, decay_steps=100000, verbose=0):
+        super().__init__(verbose)
+        self.start_ent = start_ent
+        self.end_ent = end_ent
+        self.decay_steps = decay_steps
+        
+    def _on_step(self) -> bool:
+        # 线性衰减
+        progress = min(self.num_timesteps / self.decay_steps, 1.0)
+        current_ent = self.start_ent + (self.end_ent - self.start_ent) * progress
+        
+        # 更新模型的 entropy coefficient
+        if isinstance(self.model, PPO):
+            self.model.ent_coef = current_ent
+            
+        # 记录到 TensorBoard
+        self.logger.record("train/entropy_coef", current_ent)
+        return True
+
 class TurtleBotRLNode(Node):
     """Custom callback for logging all episode metrics to Tensorboard."""
 
@@ -46,6 +68,7 @@ class TurtleBotRLNode(Node):
 
         # Initialize environment with random positions
         start_pos, goal_pos = self._generate_random_positions()
+
         self.env = TurtleBotNavEnv(start_pos, goal_pos)
 
         self.model = self._load_algorithm(self.algorithm, self.model_path)
@@ -72,8 +95,8 @@ class TurtleBotRLNode(Node):
             if distance >= self.min_distance:
                 start_pos = np.array([start_x, start_y], dtype=np.float32)
                 goal_pos = np.array([goal_x, goal_y], dtype=np.float32)
-                return start_pos, goal_pos
-                # return [-1.5, 1], [0.5, -1]
+                # return start_pos, goal_pos
+                return [0.5, -1], [-1, 0.5]
         self.get_logger().warning("Could not generate valid random positions, using fallback positions")
         return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
@@ -118,7 +141,6 @@ class TurtleBotRLNode(Node):
                     gamma=0.99,
                     gae_lambda=0.95,
                     clip_range=0.2,
-                    ent_coef=0.001,
                     vf_coef=0.5,
                     max_grad_norm=0.5,  # 添加梯度裁剪
                     policy_kwargs=dict(
@@ -137,18 +159,28 @@ class TurtleBotRLNode(Node):
 
         # 添加自定义回调
         success_rate_callback = SuccessRateCallback(tensorboard_log_dir=self.tensorboard_log, verbose=1)
+    
+        # 添加 entropy 调度回调
+        entropy_callback = EntropyScheduleCallback(
+            start_ent=0.003,      # 初始 entropy coefficient
+            end_ent=0.001,       #ent 最终 entropy coefficient
+            decay_steps=self.timesteps * self.episodes,  # 在整个训练过程中逐渐衰减
+            verbose=1
+        )
         
         # 添加训练开始时间戳用于区分不同的训练会话
         training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
         for game in range(1, num_games + 1):
             # 生成新的起点和目标点
             start, goal = self._generate_random_positions()
+            print(f"起始位置: {start}")
+            print(f"目标位置: {goal}")
             self.env.reset(start_position=start, goal_position=goal)
             
             # 使用model.learn()进行训练，而不是手动循环
             self.get_logger().info(f"Game {game}: Training for {max_steps} timesteps...")
-            self.model.learn(total_timesteps=max_steps, reset_num_timesteps=False, callback=[success_rate_callback])
+            self.model.learn(total_timesteps=max_steps, reset_num_timesteps=False, 
+                           callback=[success_rate_callback, entropy_callback])
 
             # 每1个episode保存一次模型
             if game % 1 == 0:
