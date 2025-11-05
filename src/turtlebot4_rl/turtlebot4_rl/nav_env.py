@@ -11,19 +11,21 @@ from tf2_ros import Buffer, TransformListener
 import time
 import math
 import tf_transformations
-
+import os
 # Constants
 GOAL_REACH_THRESHOLD = 0.3  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, start_position, goal_position, max_wait_for_observation=50.0):
         super().__init__()
+        # self._reward_log_interval_s = float(os.getenv("TBOT_REWARD_LOG_INTERVAL", "10.0"))
+        # self._last_reward_log_time = 0.0
 
         if not rclpy.ok():
             rclpy.init(args=None)
 
         self.node = rclpy.create_node('turtlebot_nav_env')
-
+        
         # Velocity limits (use constants so clipping is consistent)
         self.MAX_LINEAR_VEL = 3.0
         self.MIN_LINEAR_VEL = -3.0
@@ -39,14 +41,22 @@ class TurtleBotNavEnv(gym.Env):
 
         # Continuous observation (LiDAR scans + robot state)
         self.observation_space = gym.spaces.Box(
-            low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -3.0, -1.9])]),
-            high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 3.0, 1.9])]),
+            low=np.concatenate([np.zeros(64), np.array([0.0, -np.pi, -3.0, -1.9])]),
+            high=np.concatenate([np.full(64, 12.0), np.array([20.0, np.pi, 3.0, 1.9])]),
             dtype=np.float32
         )
 
-        # Pub/Sub
-        self.cmd_vel_pub = self.node.create_publisher(TwistStamped, '/cmd_vel', 10)
-        self.scan_sub = self.node.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        # QoS 配置
+        qos = rclpy.qos.QoSProfile(
+            reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
+            durability=rclpy.qos.DurabilityPolicy.VOLATILE,
+            history=rclpy.qos.HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        # Pub/Sub with QoS settings
+        self.cmd_vel_pub = self.node.create_publisher(TwistStamped, '/cmd_vel', qos)
+        self.scan_sub = self.node.create_subscription(LaserScan, '/scan', self.scan_callback, qos)
         
         # Gazebo Transport Node for getting model pose directly
         self.gz_node = GzNode()
@@ -319,9 +329,12 @@ class TurtleBotNavEnv(gym.Env):
         # LiDAR data
         if self.lidar_data is None:
             # If no state available, return zeros for LiDAR data
-            lidar_data = np.zeros(640, dtype=np.float32)
+            lidar_data = np.zeros(64, dtype=np.float32)
         else:
-            lidar_data = self.lidar_data.copy()
+            # 将640个数据重塑为(64, 10)的数组，每10个一组
+            reshaped_data = self.lidar_data.reshape(-1, 10)
+            # 取每组中的最小值作为该组的代表值
+            lidar_data = np.min(reshaped_data, axis=1)
         
         # Robot state: [distance_to_goal, angle_to_goal, prev_linear_vel, prev_angular_vel]
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
@@ -355,73 +368,40 @@ class TurtleBotNavEnv(gym.Env):
 
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            target_reward = 100.0
+            target_reward = 150.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -100.0
+            collision_reward = -150.0
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
         else:
             distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-            # if distance_to_goal <= 0.5:
-            #     goal_reward = 0.25 * (1.0 - np.tanh(2.0 * (distance_to_goal - 0.2)))
-            # else:
-            #     goal_reward = 0.0
-
             distance_improvement = self.last_distance_to_goal - distance_to_goal
-            # self._print_and_log(f"distance_improvement = {distance_improvement:.4f}")
-
-            # 奖励参数
-            alpha = 20.0  # 增加正向奖励，让靠近目标更有吸引力
-            beta = 20.0   # 适度惩罚远离目标的行为
+            alpha = 60.0  
+            beta = 90.0   
             step_penalty_coef = 0.03
-            orientation_scale = 0.015
-
-            # === 距离改进奖励/惩罚 ===
             distance_reward = 0.0
             if distance_improvement > 0:
                 distance_reward = alpha * distance_improvement
-                # Update progress time
                 if hasattr(self, 'last_progress_time'):
                     self.last_progress_time = time.time()
             else:
-                distance_reward = beta * distance_improvement  # distance_improvement is negative
-
-            # === 步数惩罚 ===
+                distance_reward = beta * distance_improvement  
             step_penalty = step_penalty_coef
-
-            # === 障碍物距离惩罚 ===
-            obstacle_penalty = max(0, 1 - min_laser * 2.0) * 0.1
-
-            # === 朝向目标角度 ===
-            desired_yaw = math.atan2(
-                self.goal_position[1] - self.current_position[1],
-                self.goal_position[0] - self.current_position[0]
-            )
-            yaw_diff = self._angle_difference(self.current_yaw, desired_yaw)
-            orientation_reward = math.cos(yaw_diff) * orientation_scale
-
+            obstacle_penalty = max(0, 1 - min_laser * 2) * 0.1
             linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
             # angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
-
-            velocity_reward = linear_vel * 0.01
-
-            # === 计算总奖励 ===
-            total_reward = (distance_reward - step_penalty + velocity_reward - obstacle_penalty + orientation_reward)
-
-            # 打印详细的奖励分解
-            # self._print_and_log(
-            #     f"📊 REWARD: "
-            #     # f"goal={goal_reward:+.3f} | "
-            #     f"distance={distance_reward:+.3f} | "
-            #     f"step=-{step_penalty:.3f} | "
-            #     f"obstacle=-{obstacle_penalty:.3f} | "
-            #     f"orientation={orientation_reward:.3f} | "
-            #     f"velocity={velocity_reward:+.3f} | "
-            #     f"TOTAL={total_reward:+.2f}"
-            # )
-            # === 更新状态 ===
+            velocity_reward = linear_vel * 0.005
+            total_reward = (distance_reward - step_penalty + velocity_reward - obstacle_penalty)
+            self._print_and_log(
+                    f"REWARD: "
+                    f"distance={distance_reward:+.3f}|"
+                    f"step=-{step_penalty:.3f}|"
+                    f"obstacle=-{obstacle_penalty:.3f}|"
+                    f"velocity={velocity_reward:+.3f}|"
+                    f"TOTAL={total_reward:+.2f}"
+                )
             self.previous_position = np.copy(self.current_position)
             return total_reward
 
