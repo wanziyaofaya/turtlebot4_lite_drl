@@ -25,7 +25,6 @@ class TurtleBotNavEnv(gym.Env):
             rclpy.init(args=None)
 
         self.node = rclpy.create_node('turtlebot_nav_env')
-        
         # Velocity limits (use constants so clipping is consistent)
         self.MAX_LINEAR_VEL = 3.0
         self.MIN_LINEAR_VEL = -3.0
