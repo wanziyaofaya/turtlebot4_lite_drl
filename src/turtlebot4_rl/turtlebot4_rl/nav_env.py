@@ -334,6 +334,8 @@ class TurtleBotNavEnv(gym.Env):
             reshaped_data = self.lidar_data.reshape(-1, 10)
             # 取每组中的最小值作为该组的代表值
             lidar_data = np.min(reshaped_data, axis=1)
+            # 归一化：大于1的值设为1，其余保持原值
+            lidar_data = np.minimum(lidar_data, 1.0)
         
         # Robot state: [distance_to_goal, angle_to_goal, prev_linear_vel, prev_angular_vel]
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
@@ -364,7 +366,9 @@ class TurtleBotNavEnv(gym.Env):
         # Combine LiDAR data with robot state
         combined_state = np.concatenate([lidar_data, robot_state])
         return combined_state
+    
 
+        
     def _calculate_reward(self, target, collision, min_laser):
         if target:
             target_reward = 150.0
@@ -378,13 +382,11 @@ class TurtleBotNavEnv(gym.Env):
             distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
             distance_improvement = self.last_distance_to_goal - distance_to_goal
             alpha = 60.0  
-            beta = 90.0   
+            beta = 90.0
             step_penalty_coef = 0.03
             distance_reward = 0.0
             if distance_improvement > 0:
                 distance_reward = alpha * distance_improvement
-                if hasattr(self, 'last_progress_time'):
-                    self.last_progress_time = time.time()
             else:
                 distance_reward = beta * distance_improvement  
             step_penalty = step_penalty_coef

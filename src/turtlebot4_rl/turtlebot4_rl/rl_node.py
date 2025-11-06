@@ -16,7 +16,7 @@ from turtlebot4_rl.custom_callback import SuccessRateCallback
 class EntropyScheduleCallback(BaseCallback):
     """动态调整 entropy coefficient 的回调函数"""
     
-    def __init__(self, start_ent=0.006, end_ent=0.001, decay_steps=100000, verbose=0):
+    def __init__(self, start_ent=0.01, end_ent=0.004, decay_steps=100000, verbose=0):
         super().__init__(verbose)
         self.start_ent = start_ent
         self.end_ent = end_ent
@@ -131,16 +131,16 @@ class TurtleBotRLNode(Node):
                     device='cpu',
                     tensorboard_log=self.tensorboard_log,
                     learning_rate=1e-4,  
-                    n_steps=4096,  
-                    batch_size=512,  
-                    n_epochs=6,
+                    n_steps=2048,  
+                    batch_size=128,  
+                    n_epochs=10,
                     gamma=0.99,
                     gae_lambda=0.95,
                     clip_range=0.2,
                     vf_coef=0.5,
                     max_grad_norm=0.5,  # 添加梯度裁剪
                     policy_kwargs=dict(
-                        net_arch=[dict(pi=[64, 64], vf=[64, 64])],
+                        net_arch=[dict(pi=[128, 128], vf=[128, 128])],
                         activation_fn=torch.nn.ReLU
                     )
                 )
@@ -158,8 +158,8 @@ class TurtleBotRLNode(Node):
     
         # 添加 entropy 调度回调
         entropy_callback = EntropyScheduleCallback(
-            start_ent=0.006,      # 初始 entropy coefficient
-            end_ent=0.001,       #ent 最终 entropy coefficient
+            start_ent=0.01,      # 初始 entropy coefficient
+            end_ent=0.004,       #ent 最终 entropy coefficient
             decay_steps=self.timesteps * self.episodes,  # 在整个训练过程中逐渐衰减
             verbose=1
         )
