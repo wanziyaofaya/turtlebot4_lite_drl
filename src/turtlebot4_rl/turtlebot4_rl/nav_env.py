@@ -1,30 +1,39 @@
 import gymnasium as gym
 import numpy as np
 import rclpy
+from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped
 from sensor_msgs.msg import LaserScan
 from gz.transport14 import Node as GzNode
 from gz.msgs11.pose_pb2 import Pose as GzPose
 from gz.msgs11.boolean_pb2 import Boolean
 from gz.msgs11.pose_v_pb2 import Pose_V
-from tf2_ros import Buffer, TransformListener
 import time
 import math
 import tf_transformations
-import os
+
 # Constants
 GOAL_REACH_THRESHOLD = 0.3  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, start_position, goal_position, max_wait_for_observation=50.0):
+    def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2.0):
         super().__init__()
-        # self._reward_log_interval_s = float(os.getenv("TBOT_REWARD_LOG_INTERVAL", "10.0"))
-        # self._last_reward_log_time = 0.0
 
         if not rclpy.ok():
             rclpy.init(args=None)
 
         self.node = rclpy.create_node('turtlebot_nav_env')
+        
+        # 地图边界和位置生成配置
+        self.map_bounds = map_bounds if map_bounds is not None else {
+            'x_min': -1.5, 'x_max': 1.5, 'y_min': -1.5, 'y_max': 1.5
+        }
+        self.min_distance = min_distance  # 起点和目标之间的最小距离
+        
+        # Placeholder values - will be set by reset() before first use
+        self.start_position = np.array([0.0, 0.0], dtype=np.float32)
+        self.goal_position = np.array([2.0, 2.0], dtype=np.float32)
+
         # Velocity limits (use constants so clipping is consistent)
         self.MAX_LINEAR_VEL = 3.0
         self.MIN_LINEAR_VEL = -3.0
@@ -38,24 +47,17 @@ class TurtleBotNavEnv(gym.Env):
             dtype=np.float32
         )
 
-        # Continuous observation (LiDAR scans + robot state)
+        # Continuous observation (64维LiDAR最小值 + robot state)
+        # Robot state: [distance_to_goal, angle_to_goal, distance_change, angle_change, prev_linear_vel, prev_angular_vel]
         self.observation_space = gym.spaces.Box(
-            low=np.concatenate([np.zeros(64), np.array([0.0, -np.pi, -3.0, -1.9])]),
-            high=np.concatenate([np.full(64, 12.0), np.array([20.0, np.pi, 3.0, 1.9])]),
+            low=np.concatenate([np.zeros(64), np.array([0.0, -np.pi, -20.0, -2*np.pi, -3.0, -1.9])]),
+            high=np.concatenate([np.full(64, 12.0), np.array([20.0, np.pi, 20.0, 2*np.pi, 3.0, 1.9])]),
             dtype=np.float32
         )
 
-        # QoS 配置
-        qos = rclpy.qos.QoSProfile(
-            reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
-            durability=rclpy.qos.DurabilityPolicy.VOLATILE,
-            history=rclpy.qos.HistoryPolicy.KEEP_LAST,
-            depth=1
-        )
-
-        # Pub/Sub with QoS settings
-        self.cmd_vel_pub = self.node.create_publisher(TwistStamped, '/cmd_vel', qos)
-        self.scan_sub = self.node.create_subscription(LaserScan, '/scan', self.scan_callback, qos)
+        # Pub/Sub
+        self.cmd_vel_pub = self.node.create_publisher(TwistStamped, '/cmd_vel', 10)
+        self.scan_sub = self.node.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         
         # Gazebo Transport Node for getting model pose directly
         self.gz_node = GzNode()
@@ -66,32 +68,15 @@ class TurtleBotNavEnv(gym.Env):
         success = self.gz_node.subscribe(Pose_V, self.model_pose_topic, self._gz_pose_callback)
         if not success:
             self._print_and_log(f"Failed to subscribe to {self.model_pose_topic}")
-        
-        # TF2 Buffer and Listener for coordinate transformations
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self.node)
-        
-        # Environment coordinate frame (you can customize this)
-        self.env_frame_id = 'env_frame'
-        self.gazebo_world_frame_id = 'world'
 
-        # State
+        # State - will be properly initialized by reset()
         self.lidar_data = None
-        self.start_position = np.array(start_position, dtype=np.float32)
-        self.goal_position = np.array(goal_position, dtype=np.float32)
-        self.current_position = np.copy(self.start_position)
+        self.current_position = None
         self.current_yaw = 0.0
-        self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        self.best_distance_to_goal = np.linalg.norm(self.goal_position - self.start_position)
-        self.max_steps_without_improvement = 10000
-        self.distance_degradation_limit = 50
+        self.prev_distance_to_goal = 0.0
+        self.prev_angle_to_goal = 0.0
         self.done = False
         self.max_wait_for_observation = max_wait_for_observation
-
-        self.previous_position = np.copy(self.start_position)
-        self.stationary_steps = 0
-        self.stationary_threshold = 0.01  # Threshold to consider the robot as stationary
-        self.max_stationary_steps = 100  # Maximum allowed stationary steps before penalty
 
         # Gazebo model state tracking
         self.gazebo_position = None
@@ -101,16 +86,27 @@ class TurtleBotNavEnv(gym.Env):
         # Previous velocities for robot state
         self.prev_linear_vel = 0.0
         self.prev_angular_vel = 0.0
+        
+        # Last action for reward calculation
+        self.last_action = np.array([0.0, 0.0], dtype=np.float32)
 
-        self._reset_robot_position()
-        self._wait_for_model_state()
-        self._print_and_log(f"TurtleBotNavEnv initialized with Gazebo model state tracking")
+        self._print_and_log(f"TurtleBotNavEnv initialized. Call reset() before first use.")
 
     def scan_callback(self, msg):
         """Updates state with current scan data."""
-        self.lidar_data = np.array(msg.ranges, dtype=np.float32)
-        # Replace inf values with the maximum LiDAR range (12.0m)
-        self.lidar_data[np.isinf(self.lidar_data)] = 12.0
+        raw_data = np.array(msg.ranges, dtype=np.float32)
+        raw_data[np.isinf(raw_data)] = 12.0
+        # 分成64段，每段10个数据，取最小值
+        if raw_data.shape[0] >= 640:
+            processed = [np.min(raw_data[i*10:(i+1)*10]) for i in range(64)]
+        else:
+            # 如果数据不足640，补齐为64维
+            padded = np.pad(raw_data, (0, 640-raw_data.shape[0]), constant_values=12.0)
+            processed = [np.min(padded[i*10:(i+1)*10]) for i in range(64)]
+        # 转成 numpy 数组并截断：将所有 >= 2.0 的测距设为 2.0，保留小于 2.0 的值
+        processed = np.array(processed, dtype=np.float32)
+        processed[processed >= 2.0] = 2.0
+        self.lidar_data = processed
 
     def _gz_pose_callback(self, msg):
         """Callback for Gazebo pose topic - receives Pose_V message"""
@@ -145,48 +141,6 @@ class TurtleBotNavEnv(gym.Env):
         except Exception as e:
             pass
 
-    def _get_robot_pose_from_gazebo(self):
-        """Get robot pose directly from Gazebo using Gazebo Transport"""
-        try:
-            # Request pose from Gazebo
-            entity_name = self.robot_model_name
-            service_name = "/world/maze/pose/info"
-            
-            # Create request message
-            req = GzPose()
-            req.name = entity_name
-            
-            # Make synchronous service call with timeout
-            timeout_ms = 1000
-            result, response = self.gz_node.request(service_name, req, GzPose, GzPose, timeout_ms)
-            
-            if result and response:
-                # Store Gazebo position and orientation
-                self.gazebo_position = np.array([
-                    response.position.x,
-                    response.position.y,
-                    response.position.z
-                ], dtype=np.float32)
-                
-                self.gazebo_orientation = [
-                    response.orientation.x,
-                    response.orientation.y,
-                    response.orientation.z,
-                    response.orientation.w
-                ]
-                
-                # Convert to environment coordinates
-                self._update_env_position()
-                self.model_state_received = True
-                return True
-            else:
-                self._print_and_log(f"Failed to get pose for {entity_name}")
-                return False
-                
-        except Exception as e:
-            self._print_and_log(f"Error getting robot pose from Gazebo: {e}")
-            return False
-
     def _update_env_position(self):
         """Convert Gazebo coordinates to environment coordinates using TF transformation"""
         if self.gazebo_position is None or self.gazebo_orientation is None:
@@ -197,44 +151,67 @@ class TurtleBotNavEnv(gym.Env):
         # Calculate yaw from quaternion
         _, _, self.current_yaw = tf_transformations.euler_from_quaternion(self.gazebo_orientation)
 
-    def _rotate_2d(self, point, theta):
-        """Rotate a 2D point by theta (radians)."""
-        c, s = math.cos(theta), math.sin(theta)
-        x, y = point
-        return np.array([c*x - s*y, s*x + c*y], dtype=np.float32)
-
-    def seed(self, seed=0):
-        """Set the random seed for reproducibility."""
-        super().seed(seed)
-        np.random.seed(seed)
-
-    def reset(self, *, seed=None, options=None, start_position=None, goal_position=None):
-        """Reset the environment. Optionally set new start and goal positions."""
+    def _generate_random_positions(self):
+        """生成随机起点和目标位置，确保不在障碍物内且满足最小距离要求"""
+        from turtlebot4_rl.collision import is_spawn_position_valid
         
-        if start_position is not None:
-            self.start_position = np.array(start_position, dtype=np.float32)
-        if goal_position is not None:
-            self.goal_position = np.array(goal_position, dtype=np.float32)
+        max_attempts = 1000
+        for _ in range(max_attempts):
+            start_x = round(np.random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
+            start_y = round(np.random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
+            if not is_spawn_position_valid(start_x, start_y, bounds=self.map_bounds):
+                continue
+            
+            goal_x = round(np.random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
+            goal_y = round(np.random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
+            if not is_spawn_position_valid(goal_x, goal_y, bounds=self.map_bounds):
+                continue
+            
+            distance = np.sqrt((goal_x - start_x)**2 + (goal_y - start_y)**2)
+            if distance >= self.min_distance:
+                start_pos = np.array([start_x, start_y], dtype=np.float32)
+                goal_pos = np.array([goal_x, goal_y], dtype=np.float32)
+                return start_pos, goal_pos
+        
+        # 如果无法生成有效位置，使用默认值
+        self._print_and_log("Warning: Could not generate valid positions, using fallback")
+        return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
+    def reset(self, *, seed=None, options=None):
+        """Reset the environment with new random start and goal positions."""
+        
+        # Call parent reset first to handle seeding
         super().reset(seed=seed)
+        
+        # Generate new random positions (will use the seed set by super().reset())
+        self.start_position, self.goal_position = self._generate_random_positions()
 
+        # Send stop command
         self._send_stop_command()
         self.done = False
 
         # Reset position in Gazebo
         self._reset_robot_position()
+        self._print_and_log(f"Resetting robot to start: x={self.start_position[0]:.2f}, y={self.start_position[1]:.2f} | goal: x={self.goal_position[0]:.2f}, y={self.goal_position[1]:.2f}")
         
-        # Wait for model state to be received
+        # Wait for model state to be received (updates self.current_position and self.current_yaw)
         self._wait_for_model_state()
         
-        # Reset state variables
+        # Reset all state variables after we have current_position
         self.lidar_data = None
-        self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        self.direction_history = []
-        self.previous_position = np.copy(self.start_position)
-
+        self.prev_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+        
+        # Calculate initial angle to goal
+        goal_vector = self.goal_position - self.current_position
+        angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
+        self.prev_angle_to_goal = angle_to_goal_global - self.current_yaw
+        # Normalize to [-pi, pi]
+        self.prev_angle_to_goal = (self.prev_angle_to_goal + np.pi) % (2 * np.pi) - np.pi
+        
+        # Reset velocities
         self.prev_linear_vel = 0.0
         self.prev_angular_vel = 0.0
+        self.last_action = np.array([0.0, 0.0], dtype=np.float32)
 
         # Wait for initial observations
         if not self._wait_for_new_state():
@@ -244,9 +221,6 @@ class TurtleBotNavEnv(gym.Env):
 
     def step(self, action):
         """Execute one step in the environment."""
-        # 保存执行动作前的距离作为"上次距离"
-        self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        
         # Execute action once
         self._take_action(action)
         self.last_action = action
@@ -327,17 +301,12 @@ class TurtleBotNavEnv(gym.Env):
         """Return the current state (LiDAR readings + robot state)."""
         # LiDAR data
         if self.lidar_data is None:
-            # If no state available, return zeros for LiDAR data
+            # If no state available, return zeros for LiDAR数据
             lidar_data = np.zeros(64, dtype=np.float32)
         else:
-            # 将640个数据重塑为(64, 10)的数组，每10个一组
-            reshaped_data = self.lidar_data.reshape(-1, 10)
-            # 取每组中的最小值作为该组的代表值
-            lidar_data = np.min(reshaped_data, axis=1)
-            # 归一化：大于1的值设为1，其余保持原值
-            lidar_data = np.minimum(lidar_data, 1.0)
+            lidar_data = self.lidar_data.copy()
         
-        # Robot state: [distance_to_goal, angle_to_goal, prev_linear_vel, prev_angular_vel]
+        # Calculate current distance and angle to goal
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
 
         # 添加详细调试信息 - 所有坐标均为环境坐标系
@@ -349,97 +318,73 @@ class TurtleBotNavEnv(gym.Env):
         #     f"距离目标={distance_to_goal:.3f}m | "
         # )
         
-        # Calculate angle to goal relative to robot's current orientatilobal = np.arctan2(goal_vector[1], goal_vector[0])
+        # Calculate angle to goal relative to robot's current orientation
         goal_vector = self.goal_position - self.current_position
         angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
         angle_to_goal = angle_to_goal_global - self.current_yaw
         # Normalize angle to [-pi, pi]
         angle_to_goal = (angle_to_goal + np.pi) % (2 * np.pi) - np.pi
         
+        # Calculate changes from previous step
+        distance_change = distance_to_goal - self.prev_distance_to_goal
+        angle_change = angle_to_goal - self.prev_angle_to_goal
+        # Normalize angle change to [-pi, pi]
+        angle_change = (angle_change + np.pi) % (2 * np.pi) - np.pi
+        
+        # Robot state: [distance_to_goal, angle_to_goal, distance_change, angle_change, prev_linear_vel, prev_angular_vel]
         robot_state = np.array([
             distance_to_goal,
             angle_to_goal,
+            distance_change,
+            angle_change,
             self.prev_linear_vel,
             self.prev_angular_vel
         ], dtype=np.float32)
         
+        # Update history for next step
+        self.prev_distance_to_goal = distance_to_goal
+        self.prev_angle_to_goal = angle_to_goal
+        
         # Combine LiDAR data with robot state
         combined_state = np.concatenate([lidar_data, robot_state])
         return combined_state
-    
 
-        
     def _calculate_reward(self, target, collision, min_laser):
         if target:
-            target_reward = 150.0
+            target_reward = 100
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -150.0
+            collision_reward = -50
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
         else:
             distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-            distance_improvement = self.last_distance_to_goal - distance_to_goal
-            alpha = 60.0  
-            beta = 90.0
+            distance_improvement = self.prev_distance_to_goal - distance_to_goal
+            alpha = 20.0  # 增加正向奖励，让靠近目标更有吸引力
+            beta = 20.0   # 适度惩罚远离目标的行为
             step_penalty_coef = 0.03
             distance_reward = 0.0
             if distance_improvement > 0:
                 distance_reward = alpha * distance_improvement
+                # Update progress time
+                if hasattr(self, 'last_progress_time'):
+                    self.last_progress_time = time.time()
             else:
-                distance_reward = beta * distance_improvement  
+                distance_reward = beta * distance_improvement  # distance_improvement is negative
             step_penalty = step_penalty_coef
-            obstacle_penalty = max(0, 1 - min_laser * 2) * 0.1
-            linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
-            # angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
-            velocity_reward = linear_vel * 0.005
-            total_reward = (distance_reward - step_penalty + velocity_reward - obstacle_penalty)
-            self._print_and_log(
-                    f"REWARD: "
-                    f"distance={distance_reward:+.3f}|"
-                    f"step=-{step_penalty:.3f}|"
-                    f"obstacle=-{obstacle_penalty:.3f}|"
-                    f"velocity={velocity_reward:+.3f}|"
-                    f"TOTAL={total_reward:+.2f}"
-                )
-            self.previous_position = np.copy(self.current_position)
+            # obstacle_penalty = max(0, 1 - min_laser * 2) * 0.04
+            linear_vel = self.last_action[0]
+            angular_vel = abs(self.last_action[1])
+            velocity_reward = linear_vel * 0.03 - angular_vel * 0.008
+            total_reward = distance_reward - step_penalty + velocity_reward
             return total_reward
-
-    def _count_oscillations(self):
-        """
-        Count the number of direction changes in the recent movement history.
-        Oscillation is detected when the movement direction alternates frequently.
-        """
-        oscillations = 0
-        for i in range(1, len(self.direction_history)):
-            if self.direction_history[i] != 0 and self.direction_history[i] != self.direction_history[i-1]:
-                oscillations += 1
-        return oscillations
-     
-    def _update_direction_history(self, movement_direction):
-        """
-        Update the movement direction history with the latest movement.
-        """
-        self.direction_history.append(movement_direction)
-        if len(self.direction_history) > self.max_history:
-            self.direction_history.pop(0)
-
-    def _angle_difference(self, current, target):
-        """
-        Compute the smallest difference between two angles.
-        """
-        diff = target - current
-        while diff > math.pi:
-            diff -= 2 * math.pi
-        while diff < -math.pi:
-            diff += 2 * math.pi
-        return diff
     
     def _is_collision(self):
         """Check if a collision has occurred based on LiDAR data."""
         collision_threshold = 0.25
         min_lidar = np.min(self.lidar_data) if self.lidar_data is not None else float('inf')
+        min_lidar = min_lidar
         collision = min_lidar < collision_threshold
         if collision:
             self._print_and_log(f"Collision detected! min_lidar={min_lidar:.4f}")
@@ -470,7 +415,8 @@ class TurtleBotNavEnv(gym.Env):
         pose_msg.position.y = float(self.start_position[1])
         pose_msg.position.z = 0.0
 
-        yaw = -math.pi / 2  # Desired yaw in radians (facing downwards, -y direction in Gazebo)
+        # Random initial yaw for better generalization
+        yaw = np.random.uniform(-math.pi, math.pi)
         pose_msg.orientation.w = math.cos(yaw / 2.0)
         pose_msg.orientation.x = 0.0
         pose_msg.orientation.y = 0.0

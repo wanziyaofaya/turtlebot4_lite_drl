@@ -1,7 +1,8 @@
+# turtlebot_rl_node.py
+
 import rclpy
 from rclpy.node import Node
 from turtlebot4_rl.nav_env import TurtleBotNavEnv
-from turtlebot4_rl.collision import is_spawn_position_valid
 from stable_baselines3 import PPO, DQN, SAC
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import configure
@@ -10,29 +11,67 @@ import argparse
 import os
 from datetime import datetime
 import torch
-import random
-from turtlebot4_rl.custom_callback import SuccessRateCallback
+from turtlebot4_rl.custom_callback import SuccessInfoCallback
 
-class EntropyScheduleCallback(BaseCallback):
-    """动态调整 entropy coefficient 的回调函数"""
-    
-    def __init__(self, start_ent=0.01, end_ent=0.004, decay_steps=100000, verbose=0):
-        super().__init__(verbose)
-        self.start_ent = start_ent
-        self.end_ent = end_ent
-        self.decay_steps = decay_steps
-        
+class EpisodeCheckpointCallback(BaseCallback):
+    """每N个episode保存一次模型的回调"""
+    def __init__(self, save_freq_episodes: int, save_path: str, name_prefix: str = "model", verbose: int = 1):
+        super().__init__(verbose=verbose)
+        self.save_freq_episodes = save_freq_episodes
+        self.save_path = save_path
+        self.name_prefix = name_prefix
+        self.episode_count = 0
+    def _init_callback(self) -> None:
+        # 创建保存目录
+        os.makedirs(self.save_path, exist_ok=True)
     def _on_step(self) -> bool:
-        # 线性衰减
-        progress = min(self.num_timesteps / self.decay_steps, 1.0)
-        current_ent = self.start_ent + (self.end_ent - self.start_ent) * progress
-        
-        # 更新模型的 entropy coefficient
-        if isinstance(self.model, PPO):
-            self.model.ent_coef = current_ent
-            
-        # 记录到 TensorBoard
-        self.logger.record("train/entropy_coef", current_ent)
+        # 检测episode结束
+        dones = self.locals.get("dones")
+        if dones is not None:
+            # 处理向量化和非向量化环境
+            if isinstance(dones, (list, tuple, np.ndarray)):
+                num_done = int(np.sum(dones))
+            else:
+                num_done = 1 if bool(dones) else 0
+            if num_done > 0:
+                self.episode_count += num_done
+                # 每N个episode保存一次模型
+                if self.episode_count % self.save_freq_episodes == 0:
+                    model_path = os.path.join(
+                        self.save_path,
+                        f"{self.name_prefix}_ep{self.episode_count}_steps{self.num_timesteps}.zip"
+                    )
+                    self.model.save(model_path)
+                    if self.verbose:
+                        print(f"[Episode Checkpoint] Saved model: {model_path}")                      
+        return True
+
+class EntCoefScheduler(BaseCallback):
+    def __init__(self, start_value: float = 0.015, end_value: float = 0.007, 
+                 step_interval: int = 50000, max_steps: int = 500000):
+        super().__init__(verbose=0)
+        self.start_value = start_value
+        self.end_value = end_value
+        self.step_interval = step_interval  # 每5万步衰减一次
+        self.max_steps = max_steps         # 50万步后停止衰减
+        self.decay_rate = 0.9              # 每次衰减10%
+
+    def _on_step(self) -> bool:
+        # 如果超过最大步数，使用最终值
+        if self.num_timesteps >= self.max_steps:
+            current_ent_coef = self.end_value
+        else:
+            current_stage = min(self.num_timesteps // self.step_interval, 
+                              self.max_steps // self.step_interval)
+            # 计算当前的熵系数：每阶段降低10%
+            current_ent_coef = max(
+                self.end_value,  # 不低于最终值
+                self.start_value * (self.decay_rate ** current_stage)
+            )
+        # 更新模型的熵系数
+        if hasattr(self.model, 'ent_coef'):
+            self.model.ent_coef = current_ent_coef
+        self.logger.record("train/ent_coef", current_ent_coef)
         return True
 
 class TurtleBotRLNode(Node):
@@ -62,10 +101,11 @@ class TurtleBotRLNode(Node):
         self.tensorboard_log = os.path.join('tensorboard_logs', self.algorithm, timestamp)
         os.makedirs(self.tensorboard_log, exist_ok=True)
 
-        # Initialize environment with random positions
-        start_pos, goal_pos = self._generate_random_positions()
-
-        self.env = TurtleBotNavEnv(start_pos, goal_pos)
+        # Initialize environment (will auto-generate random positions on each reset)
+        self.env = TurtleBotNavEnv(
+            map_bounds=self.map_bounds,
+            min_distance=self.min_distance
+        )
 
         self.model = self._load_algorithm(self.algorithm, self.model_path)
 
@@ -74,27 +114,6 @@ class TurtleBotRLNode(Node):
         )
         self.get_logger().info(f"Tensorboard logs will be saved to: {os.path.abspath(self.tensorboard_log)}")
         self.get_logger().info("To view training progress, run: tensorboard --logdir tensorboard_logs")
-
-    def _generate_random_positions(self):
-        """Generate random start and goal positions that are not in obstacles and meet distance requirements. 坐标保留两位小数"""
-        max_attempts = 1000
-        for _ in range(max_attempts):
-            start_x = round(random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
-            start_y = round(random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
-            if not is_spawn_position_valid(start_x, start_y, bounds=self.map_bounds):
-                continue
-            goal_x = round(random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
-            goal_y = round(random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
-            if not is_spawn_position_valid(goal_x, goal_y, bounds=self.map_bounds):
-                continue
-            distance = np.sqrt((goal_x - start_x)**2 + (goal_y - start_y)**2)
-            if distance >= self.min_distance:
-                start_pos = np.array([start_x, start_y], dtype=np.float32)
-                goal_pos = np.array([goal_x, goal_y], dtype=np.float32)
-                # return start_pos, goal_pos
-                return [0.5, -1], [-1, 0.5]
-        self.get_logger().warning("Could not generate valid random positions, using fallback positions")
-        return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
     def _load_algorithm(self, algorithm_name, model_path):
         """Load or initialize the RL model based on the specified algorithm."""
@@ -110,18 +129,9 @@ class TurtleBotRLNode(Node):
         if model_path and os.path.isfile(model_path):
             self.get_logger().info(f"Loading pre-trained model from {model_path}")
             model = algorithms[algorithm_name].load(model_path, env=self.env, tensorboard_log=self.tensorboard_log)
-            new_lr = 3e-5 
-            self.get_logger().info(f"Overriding learning rate to {new_lr}")
-            model.learning_rate = new_lr
-
-            # 立即让optimizer使用新的 lr
-            if hasattr(model, 'policy') and hasattr(model.policy, 'optimizer'):
-                for param_group in model.policy.optimizer.param_groups:
-                    param_group['lr'] = new_lr
         else:
             if model_path:
                 self.get_logger().warning(f"Model path {model_path} not found. Initializing a new model.")
-            
             # 为PPO添加更稳定的超参数
             if algorithm_name == 'PPO':
                 model = algorithms[algorithm_name](
@@ -132,15 +142,43 @@ class TurtleBotRLNode(Node):
                     tensorboard_log=self.tensorboard_log,
                     learning_rate=1e-4,  
                     n_steps=2048,  
-                    batch_size=128,  
+                    batch_size=128, 
                     n_epochs=10,
                     gamma=0.99,
                     gae_lambda=0.95,
                     clip_range=0.2,
+                    clip_range_vf=None,
+                    ent_coef=0.01,
                     vf_coef=0.5,
-                    max_grad_norm=0.5,  # 添加梯度裁剪
+                    max_grad_norm=0.5,
                     policy_kwargs=dict(
-                        net_arch=[dict(pi=[128, 128], vf=[128, 128])],
+                        net_arch=[dict(pi=[256, 256], vf=[256, 256])],
+                        activation_fn=torch.nn.ReLU,
+                        ortho_init=True,  # 使用正交初始化，提高训练稳定性
+                    ),
+                    normalize_advantage=True,  # 归一化优势函数，提高训练稳定性
+                    target_kl=0.01,  # 限制策略更新幅度，提高稳定性
+                )
+            elif algorithm_name == 'SAC':
+                action_dim = float(np.prod(self.env.action_space.shape)) if hasattr(self.env.action_space, "shape") else 1.0
+                model = algorithms[algorithm_name](
+                    "MlpPolicy",
+                    self.env,
+                    verbose=1,
+                    device='cpu',
+                    tensorboard_log=self.tensorboard_log,
+                    learning_rate=3e-4,
+                    buffer_size=100_000,
+                    batch_size=256,
+                    gamma=0.99,
+                    tau=0.005,
+                    train_freq=1,
+                    gradient_steps=1,
+                    learning_starts=5000,
+                    ent_coef='auto',
+                    target_entropy=-action_dim,
+                    policy_kwargs=dict(
+                        net_arch=[256, 256],
                         activation_fn=torch.nn.ReLU
                     )
                 )
@@ -149,69 +187,53 @@ class TurtleBotRLNode(Node):
         return model
 
     def train_and_evaluate(self):
-        num_games = self.episodes 
-        max_steps = self.timesteps 
-        self.get_logger().info(f"Training for {num_games} games, each up to {max_steps} timesteps.")
+        # 计算总训练步数
+        total_timesteps = self.episodes * self.timesteps
+        
+        self.get_logger().info(f"Starting training with {total_timesteps:,} total timesteps")
+        self.get_logger().info(f"Environment will auto-generate random start/goal positions on each reset")
 
-        # 添加自定义回调
-        success_rate_callback = SuccessRateCallback(tensorboard_log_dir=self.tensorboard_log, verbose=1)
-    
-        # 添加 entropy 调度回调
-        entropy_callback = EntropyScheduleCallback(
-            start_ent=0.01,      # 初始 entropy coefficient
-            end_ent=0.004,       #ent 最终 entropy coefficient
-            decay_steps=self.timesteps * self.episodes,  # 在整个训练过程中逐渐衰减
+        callbacks = [SuccessInfoCallback(tensorboard_log_dir=self.tensorboard_log, verbose=1)]
+        
+        if self.algorithm == 'PPO':
+            ent_scheduler = EntCoefScheduler(
+                start_value=0.015,      # 起始值
+                end_value=0.007,       # 最终值
+                step_interval=50000,   # 每5万步衰减一次
+                max_steps=500000       # 在50万步时达到最终值
+            )
+            # callbacks.append(ent_scheduler)
+        
+        # 添加训练开始时间戳
+        training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # 添加每30个episode保存一次模型的回调
+        checkpoint_dir = os.path.join(self.model_dir, "checkpoints", training_session)
+        episode_checkpoint = EpisodeCheckpointCallback(
+            save_freq_episodes=30,
+            save_path=checkpoint_dir,
+            name_prefix=f"{self.algorithm}_{training_session}",
             verbose=1
         )
+        callbacks.append(episode_checkpoint)
         
-        # 添加训练开始时间戳用于区分不同的训练会话
-        training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for game in range(1, num_games + 1):
-            # 生成新的起点和目标点
-            start, goal = self._generate_random_positions()
-            print(f"起始位置: {start}")
-            print(f"目标位置: {goal}")
-            self.env.reset(start_position=start, goal_position=goal)
-            
-            # 使用model.learn()进行训练，而不是手动循环
-            self.get_logger().info(f"Game {game}: Training for {max_steps} timesteps...")
-            self.model.learn(total_timesteps=max_steps, reset_num_timesteps=False, 
-                           callback=[success_rate_callback, entropy_callback])
-
-            # 每1个episode保存一次模型
-            if game % 1 == 0:
-                model_save_path = os.path.join(
-                    self.model_dir, 
-                    f"{self.algorithm}_{training_session}_checkpoint_ep{game:03d}_ts{max_steps}.zip"
-                )
-                self.model.save(model_save_path)
-                self.get_logger().info(f"Model checkpoint saved after episode {game}: {model_save_path}")
-
-        # 如果最后的episode不是1的倍数，或者要保存最终模型
-        if num_games % 1 != 0:
-            final_model_path = os.path.join(
-                self.model_dir, 
-                f"{self.algorithm}_{training_session}_FINAL_ep{num_games:03d}_ts{max_steps}.zip"
+        try:
+            self.model.learn(
+                total_timesteps=total_timesteps, 
+                reset_num_timesteps=False, 
+                callback=callbacks
             )
-            self.model.save(final_model_path)
-            self.get_logger().info(f"Final model saved: {final_model_path}")
-        else:
-            # 如果最后的episode正好是1的倍数，重命名最后保存的模型为FINAL
-            last_checkpoint = os.path.join(
-                self.model_dir, 
-                f"{self.algorithm}_{training_session}_checkpoint_ep{num_games:03d}_ts{max_steps}.zip"
-            )
-            final_model_path = os.path.join(
-                self.model_dir, 
-                f"{self.algorithm}_{training_session}_FINAL_ep{num_games:03d}_ts{max_steps}.zip"
-            )
-            if os.path.exists(last_checkpoint):
-                os.rename(last_checkpoint, final_model_path)
-                self.get_logger().info(f"Last checkpoint renamed to final model: {final_model_path}")
-            else:
-                # 备用方案：直接保存最终模型
-                self.model.save(final_model_path)
-                self.get_logger().info(f"Final model saved: {final_model_path}")
+            self.get_logger().info("Training completed!")
+        except KeyboardInterrupt:
+            self.get_logger().info("Training interrupted by user")
+        
+        # 保存最终模型
+        final_model_path = os.path.join(
+            self.model_dir, 
+            f"{self.algorithm}_{training_session}_FINAL_{total_timesteps}steps.zip"
+        )
+        self.model.save(final_model_path)
+        self.get_logger().info(f"Model saved: {final_model_path}")
 
     def close(self):
         self.env.close()
@@ -224,8 +246,8 @@ class TurtleBotRLNode(Node):
 def main(args=None):
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument('--algorithm', type=str, default='PPO', help='RL Algorithm to use (PPO, DQN, SAC)')
-    arg_parser.add_argument('--timesteps', type=int, default=10000, help='Number of timesteps to train')
-    arg_parser.add_argument('--episodes', type=int, default=10, help='Number of training games')
+    arg_parser.add_argument('--timesteps', type=int, default=10000, help='Base timesteps per unit (total = timesteps × episodes)')
+    arg_parser.add_argument('--episodes', type=int, default=10, help='Multiplier for total timesteps (total = timesteps × episodes)')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
     arg_parser.add_argument('--min_distance', type=float, default=2.0, help='Minimum distance between start and goal positions')
 
