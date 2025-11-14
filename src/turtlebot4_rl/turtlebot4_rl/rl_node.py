@@ -152,7 +152,7 @@ class TurtleBotRLNode(Node):
                     vf_coef=0.5,
                     max_grad_norm=0.5,
                     policy_kwargs=dict(
-                        net_arch=[dict(pi=[256, 256], vf=[256, 256])],
+                        net_arch=[dict(pi=[64, 64], vf=[64, 64])],
                         activation_fn=torch.nn.ReLU,
                         ortho_init=True,  # 使用正交初始化，提高训练稳定性
                     ),
@@ -210,7 +210,7 @@ class TurtleBotRLNode(Node):
         # 添加每30个episode保存一次模型的回调
         checkpoint_dir = os.path.join(self.model_dir, "checkpoints", training_session)
         episode_checkpoint = EpisodeCheckpointCallback(
-            save_freq_episodes=30,
+            save_freq_episodes=100,
             save_path=checkpoint_dir,
             name_prefix=f"{self.algorithm}_{training_session}",
             verbose=1

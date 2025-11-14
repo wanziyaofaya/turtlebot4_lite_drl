@@ -103,9 +103,8 @@ class TurtleBotNavEnv(gym.Env):
             # 如果数据不足640，补齐为64维
             padded = np.pad(raw_data, (0, 640-raw_data.shape[0]), constant_values=12.0)
             processed = [np.min(padded[i*10:(i+1)*10]) for i in range(64)]
-        # 转成 numpy 数组并截断：将所有 >= 2.0 的测距设为 2.0，保留小于 2.0 的值
-        processed = np.array(processed, dtype=np.float32)
-        processed[processed >= 2.0] = 2.0
+        # 转成 numpy 数组并截断：将所有 >= 1.0 的测距设为 1.0，保留小于 1.0 的值
+        processed = np.clip(processed, 0.0, 1.0)
         self.lidar_data = processed
 
     def _gz_pose_callback(self, msg):
@@ -355,7 +354,7 @@ class TurtleBotNavEnv(gym.Env):
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -50
+            collision_reward = -100
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
         else:
@@ -363,7 +362,7 @@ class TurtleBotNavEnv(gym.Env):
             distance_improvement = self.prev_distance_to_goal - distance_to_goal
             alpha = 20.0  # 增加正向奖励，让靠近目标更有吸引力
             beta = 20.0   # 适度惩罚远离目标的行为
-            step_penalty_coef = 0.03
+            step_penalty_coef = 0.04
             distance_reward = 0.0
             if distance_improvement > 0:
                 distance_reward = alpha * distance_improvement
@@ -376,8 +375,15 @@ class TurtleBotNavEnv(gym.Env):
             # obstacle_penalty = max(0, 1 - min_laser * 2) * 0.04
             linear_vel = self.last_action[0]
             angular_vel = abs(self.last_action[1])
-            velocity_reward = linear_vel * 0.03 - angular_vel * 0.008
+            # self._print_and_log(f"Velocities for reward -> linear: {linear_vel:.3f} m/s, angular: {angular_vel:.3f} rad/s")
+            velocity_reward = linear_vel * 0.02 - angular_vel * 0.01
             total_reward = distance_reward - step_penalty + velocity_reward
+            # self._print_and_log(
+            #     f"➖ REWARD: distance_reward={distance_reward:.3f}, "
+            #     f"step_penalty={-step_penalty:.3f}, "
+            #     f"velocity_reward={velocity_reward:.3f} | "
+            #     f"total_reward={total_reward:.3f}"
+            # )
             return total_reward
     
     def _is_collision(self):
