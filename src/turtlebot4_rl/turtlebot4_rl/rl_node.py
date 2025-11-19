@@ -74,6 +74,27 @@ class EntCoefScheduler(BaseCallback):
         self.logger.record("train/ent_coef", current_ent_coef)
         return True
 
+class LearningRateScheduler(BaseCallback):
+    def __init__(self, start_lr: float, end_lr: float, total_steps: int, verbose: int = 0):
+        super().__init__(verbose)
+        self.start_lr = start_lr
+        self.end_lr = end_lr
+        self.total_steps = total_steps
+
+    def _on_step(self) -> bool:
+        # 计算当前步数的学习率
+        progress = min(1.0, self.num_timesteps / self.total_steps)
+        current_lr = self.start_lr + progress * (self.end_lr - self.start_lr)
+
+        # 更新学习率
+        if hasattr(self.model, 'policy') and hasattr(self.model.policy, 'optimizer'):
+            for param_group in self.model.policy.optimizer.param_groups:
+                param_group['lr'] = current_lr
+
+        # 记录学习率到Tensorboard
+        self.logger.record('train/learning_rate', current_lr)
+        return True
+
 class TurtleBotRLNode(Node):
     """Custom callback for logging all episode metrics to Tensorboard."""
 
@@ -81,7 +102,7 @@ class TurtleBotRLNode(Node):
         super().__init__(verbose)
         self.env = env
 
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2.0):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2.2):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -167,7 +188,7 @@ class TurtleBotRLNode(Node):
                     verbose=1,
                     device='cpu',
                     tensorboard_log=self.tensorboard_log,
-                    learning_rate=1e-4,
+                    learning_rate=3e-4,
                     buffer_size=1000_000,
                     batch_size=256,
                     gamma=0.99,
@@ -203,6 +224,10 @@ class TurtleBotRLNode(Node):
                 max_steps=500000       # 在50万步时达到最终值
             )
             # callbacks.append(ent_scheduler)
+
+        if self.algorithm == 'SAC':
+            lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, total_steps=250000)
+            callbacks.append(lr_scheduler)
         
         # 添加训练开始时间戳
         training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -235,6 +260,44 @@ class TurtleBotRLNode(Node):
         self.model.save(final_model_path)
         self.get_logger().info(f"Model saved: {final_model_path}")
 
+    def evaluate_model(self, num_episodes=10):
+        """
+        评估训练好的模型。
+        :param num_episodes: 评估的回合数
+        python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --evaluate --model_path <模型路径> --num_episodes 10
+        """
+        self.get_logger().info(f"Evaluating model for {num_episodes} episodes...")
+        if not self.model_path or not os.path.isfile(self.model_path):
+            self.get_logger().error("Model path is invalid or model file does not exist.")
+            return
+        # 加载模型
+        self.model = self.model.load(self.model_path, env=self.env)
+        self.get_logger().info(f"Loaded model from {self.model_path}")
+        total_rewards = []
+        success_count = 0  # 统计成功回合数
+        for episode in range(num_episodes):
+            obs = self.env.reset()
+            done = False
+            episode_reward = 0
+            while not done:
+                action, _ = self.model.predict(obs, deterministic=True)
+                obs, reward, done, info = self.env.step(action)
+                episode_reward += reward
+            total_rewards.append(episode_reward)
+            self.get_logger().info(f"Episode {episode + 1}: Reward = {episode_reward}")
+            # 检查是否成功
+            if info.get('is_success', False):
+                success_count += 1
+        avg_reward = np.mean(total_rewards)
+        success_rate = success_count / num_episodes  # 计算成功率
+        self.get_logger().info(f"Average Reward over {num_episodes} episodes: {avg_reward}")
+        self.get_logger().info(f"Success Rate: {success_rate * 100:.2f}%")
+        # 记录到 TensorBoard
+        self.model.logger.record("eval/average_reward", avg_reward)
+        self.model.logger.record("eval/success_rate", success_rate)
+        self.model.logger.dump(self.model.num_timesteps)
+        self.env.close()
+
     def close(self):
         self.env.close()
         self.get_logger().info("Environment closed.")
@@ -249,7 +312,9 @@ def main(args=None):
     arg_parser.add_argument('--timesteps', type=int, default=10000, help='Base timesteps per unit (total = timesteps × episodes)')
     arg_parser.add_argument('--episodes', type=int, default=10, help='Multiplier for total timesteps (total = timesteps × episodes)')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
-    arg_parser.add_argument('--min_distance', type=float, default=2.0, help='Minimum distance between start and goal positions')
+    arg_parser.add_argument('--min_distance', type=float, default=2.2, help='Minimum distance between start and goal positions')
+    arg_parser.add_argument('--evaluate', action='store_true', help='Evaluate the model instead of training')
+    arg_parser.add_argument('--num_episodes', type=int, default=10, help='Number of episodes for evaluation')
 
     parsed = arg_parser.parse_args(args=args)
 
@@ -264,7 +329,10 @@ def main(args=None):
             min_distance=parsed.min_distance
         )
         # 只进行训练和评估
-        node.train_and_evaluate()
+        if parsed.evaluate:
+            node.evaluate_model(num_episodes=parsed.num_episodes)
+        else:
+            node.train_and_evaluate()
         node.close()
     except Exception as e:
         print(f"Error during execution: {e}")

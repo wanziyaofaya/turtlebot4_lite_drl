@@ -16,7 +16,7 @@ import tf_transformations
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2.0):
+    def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2.2):
         super().__init__()
 
         if not rclpy.ok():
@@ -154,7 +154,7 @@ class TurtleBotNavEnv(gym.Env):
         """生成随机起点和目标位置，确保不在障碍物内且满足最小距离要求"""
         from turtlebot4_rl.collision import is_spawn_position_valid
         
-        max_attempts = 1000
+        max_attempts = 3000
         for _ in range(max_attempts):
             start_x = round(np.random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
             start_y = round(np.random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
