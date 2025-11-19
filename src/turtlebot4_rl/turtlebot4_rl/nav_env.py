@@ -13,7 +13,7 @@ import math
 import tf_transformations
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.3  # 目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2.0):
@@ -36,7 +36,7 @@ class TurtleBotNavEnv(gym.Env):
 
         # Velocity limits (use constants so clipping is consistent)
         self.MAX_LINEAR_VEL = 3.0
-        self.MIN_LINEAR_VEL = -3.0
+        self.MIN_LINEAR_VEL = 0.0
         self.MAX_ANGULAR_VEL = 1.9
         self.MIN_ANGULAR_VEL = -1.9
 
@@ -50,7 +50,7 @@ class TurtleBotNavEnv(gym.Env):
         # Continuous observation (64维LiDAR最小值 + robot state)
         # Robot state: [distance_to_goal, angle_to_goal, distance_change, angle_change, prev_linear_vel, prev_angular_vel]
         self.observation_space = gym.spaces.Box(
-            low=np.concatenate([np.zeros(64), np.array([0.0, -np.pi, -20.0, -2*np.pi, -3.0, -1.9])]),
+            low=np.concatenate([np.zeros(64), np.array([0.0, -np.pi, -20.0, -2*np.pi, 0.0, -1.9])]),
             high=np.concatenate([np.full(64, 12.0), np.array([20.0, np.pi, 20.0, 2*np.pi, 3.0, 1.9])]),
             dtype=np.float32
         )
@@ -354,7 +354,7 @@ class TurtleBotNavEnv(gym.Env):
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -100
+            collision_reward = -50
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
         else:
@@ -362,7 +362,7 @@ class TurtleBotNavEnv(gym.Env):
             distance_improvement = self.prev_distance_to_goal - distance_to_goal
             alpha = 20.0  # 增加正向奖励，让靠近目标更有吸引力
             beta = 20.0   # 适度惩罚远离目标的行为
-            step_penalty_coef = 0.04
+            step_penalty_coef = 0.05
             distance_reward = 0.0
             if distance_improvement > 0:
                 distance_reward = alpha * distance_improvement
@@ -372,12 +372,15 @@ class TurtleBotNavEnv(gym.Env):
             else:
                 distance_reward = beta * distance_improvement  # distance_improvement is negative
             step_penalty = step_penalty_coef
-            # obstacle_penalty = max(0, 1 - min_laser * 2) * 0.04
+
+            # 添加角度评价函数
+            angle_to_goal = self.prev_angle_to_goal
+            angle_reward = -abs(angle_to_goal) * 0.1  # 根据角度差给予惩罚，角度差越大，惩罚越大
             linear_vel = self.last_action[0]
             angular_vel = abs(self.last_action[1])
-            # self._print_and_log(f"Velocities for reward -> linear: {linear_vel:.3f} m/s, angular: {angular_vel:.3f} rad/s")
             velocity_reward = linear_vel * 0.02 - angular_vel * 0.01
-            total_reward = distance_reward - step_penalty + velocity_reward
+            total_reward = distance_reward - step_penalty
+            # total_reward = distance_reward - step_penalty + velocity_reward
             # self._print_and_log(
             #     f"➖ REWARD: distance_reward={distance_reward:.3f}, "
             #     f"step_penalty={-step_penalty:.3f}, "
