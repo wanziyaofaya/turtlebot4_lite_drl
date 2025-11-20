@@ -75,13 +75,19 @@ class EntCoefScheduler(BaseCallback):
         return True
 
 class LearningRateScheduler(BaseCallback):
-    def __init__(self, start_lr: float, end_lr: float, switch_step: int, verbose: int = 0):
+    def __init__(self, start_lr: float, end_lr: float, decay_start: int, verbose: int = 0):
         super().__init__(verbose)
         self.start_lr = start_lr
         self.end_lr = end_lr
-        self.switch_step = switch_step
+        self.decay_start = decay_start
+
     def _on_step(self) -> bool:
-        current_lr = self.start_lr if self.num_timesteps < self.switch_step else self.end_lr
+        # 修改学习率变化逻辑
+        if self.num_timesteps < self.decay_start:
+            current_lr = self.start_lr
+        else:
+            current_lr = self.end_lr
+
         # 更新学习率
         if hasattr(self.model, 'policy') and hasattr(self.model.policy, 'optimizer'):
             for param_group in self.model.policy.optimizer.param_groups:
@@ -222,7 +228,12 @@ class TurtleBotRLNode(Node):
             # callbacks.append(ent_scheduler)
 
         if self.algorithm == 'SAC':
-            lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, switch_step=150000)
+            # 注释掉原来的学习率调度器
+            # lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=200000, decay_end=400000)
+            # callbacks.append(lr_scheduler)
+
+            # 添加新的学习率调度器
+            lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=150000)
             callbacks.append(lr_scheduler)
         
         # 添加训练开始时间戳
