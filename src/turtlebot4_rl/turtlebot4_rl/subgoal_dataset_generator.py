@@ -6,7 +6,7 @@ import random
 from turtlebot4_rl.collision import is_spawn_position_valid
 from datetime import datetime
 
-def generate_random_positions(map_bounds, min_distance=2.2):
+def generate_random_positions(map_bounds, min_distance=2):
     """生成不在障碍物内且距离足够的随机起点和终点"""
     max_attempts = 3000
     for _ in range(max_attempts):
@@ -27,7 +27,7 @@ def generate_random_positions(map_bounds, min_distance=2.2):
     return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
 
-def generate_subgoal_dataset(env, model_dir, num_samples=3000, output_file='subgoal_dataset.txt', min_distance=2.2):
+def generate_subgoal_dataset(env, model_dir, num_samples=3000, output_file='subgoal_dataset.txt', min_distance=2):
     """
     生成子目标点数据集，每条数据包括：起点、终点、子目标点、激光信息。
     """
@@ -60,7 +60,7 @@ if __name__ == "__main__":
     parser.add_argument('--model_dir', type=str, default='models/PPO', help='数据集保存目录')
     parser.add_argument('--num_samples', type=int, default=3000, help='生成样本数量')
     parser.add_argument('--output_file', type=str, default='subgoal_dataset.txt', help='输出文件名')
-    parser.add_argument('--min_distance', type=float, default=2.2, help='起点与终点最小距离')
+    parser.add_argument('--min_distance', type=float, default=2, help='起点与终点最小距离')
     parser.add_argument('--start_x', type=float, default=0.0, help='起点x坐标')
     parser.add_argument('--start_y', type=float, default=0.0, help='起点y坐标')
     parser.add_argument('--goal_x', type=float, default=5.0, help='终点x坐标')

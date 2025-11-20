@@ -111,7 +111,7 @@ if __name__ == "__main__":
     from turtlebot4_rl.nav_env import TurtleBotNavEnv
 
     # 随机生成起点和终点，类似rl_node.py
-    def generate_random_positions(min_distance=2.2, map_bounds=None):
+    def generate_random_positions(min_distance=2, map_bounds=None):
         import random
         import numpy as np
         if map_bounds is None:

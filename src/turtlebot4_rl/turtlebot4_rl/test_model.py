@@ -7,7 +7,7 @@ import sys
 sys.path.append('/home/turtlebot4/turtlebot4_lite_drl/src')
 print(sys.path)
 
-def test_model(model_path, algorithm='PPO', episodes=10, min_distance=2.2):
+def test_model(model_path, algorithm='PPO', episodes=10, min_distance=2):
     """
     测试训练好的模型。
     :param model_path: 模型文件路径
@@ -71,5 +71,5 @@ def test_model(model_path, algorithm='PPO', episodes=10, min_distance=2.2):
 
 if __name__ == '__main__':
     # 示例测试代码
-    test_model(model_path='models/PPO/PPO_20251023_132205_checkpoint_ep080_ts5000.zip', algorithm='PPO', episodes=10, min_distance=2.2)
+    test_model(model_path='models/PPO/PPO_20251023_132205_checkpoint_ep080_ts5000.zip', algorithm='PPO', episodes=10, min_distance=2)
     # python src/turtlebot4_rl/turtlebot4_rl/test_model.py

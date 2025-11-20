@@ -75,17 +75,13 @@ class EntCoefScheduler(BaseCallback):
         return True
 
 class LearningRateScheduler(BaseCallback):
-    def __init__(self, start_lr: float, end_lr: float, total_steps: int, verbose: int = 0):
+    def __init__(self, start_lr: float, end_lr: float, switch_step: int, verbose: int = 0):
         super().__init__(verbose)
         self.start_lr = start_lr
         self.end_lr = end_lr
-        self.total_steps = total_steps
-
+        self.switch_step = switch_step
     def _on_step(self) -> bool:
-        # 计算当前步数的学习率
-        progress = min(1.0, self.num_timesteps / self.total_steps)
-        current_lr = self.start_lr + progress * (self.end_lr - self.start_lr)
-
+        current_lr = self.start_lr if self.num_timesteps < self.switch_step else self.end_lr
         # 更新学习率
         if hasattr(self.model, 'policy') and hasattr(self.model.policy, 'optimizer'):
             for param_group in self.model.policy.optimizer.param_groups:
@@ -102,7 +98,7 @@ class TurtleBotRLNode(Node):
         super().__init__(verbose)
         self.env = env
 
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2.2):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -226,7 +222,7 @@ class TurtleBotRLNode(Node):
             # callbacks.append(ent_scheduler)
 
         if self.algorithm == 'SAC':
-            lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, total_steps=250000)
+            lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, switch_step=150000)
             callbacks.append(lr_scheduler)
         
         # 添加训练开始时间戳
@@ -312,7 +308,7 @@ def main(args=None):
     arg_parser.add_argument('--timesteps', type=int, default=10000, help='Base timesteps per unit (total = timesteps × episodes)')
     arg_parser.add_argument('--episodes', type=int, default=10, help='Multiplier for total timesteps (total = timesteps × episodes)')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
-    arg_parser.add_argument('--min_distance', type=float, default=2.2, help='Minimum distance between start and goal positions')
+    arg_parser.add_argument('--min_distance', type=float, default=2, help='Minimum distance between start and goal positions')
     arg_parser.add_argument('--evaluate', action='store_true', help='Evaluate the model instead of training')
     arg_parser.add_argument('--num_episodes', type=int, default=10, help='Number of episodes for evaluation')
 

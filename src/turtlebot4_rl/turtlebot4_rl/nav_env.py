@@ -16,7 +16,7 @@ import tf_transformations
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2.2):
+    def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2):
         super().__init__()
 
         if not rclpy.ok():
