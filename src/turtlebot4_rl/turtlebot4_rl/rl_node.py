@@ -228,12 +228,7 @@ class TurtleBotRLNode(Node):
             # callbacks.append(ent_scheduler)
 
         if self.algorithm == 'SAC':
-            # 注释掉原来的学习率调度器
-            # lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=200000, decay_end=400000)
-            # callbacks.append(lr_scheduler)
-
-            # 添加新的学习率调度器
-            lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=150000)
+            lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=300000)
             callbacks.append(lr_scheduler)
         
         # 添加训练开始时间戳
