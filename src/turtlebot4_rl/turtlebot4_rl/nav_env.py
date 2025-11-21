@@ -16,7 +16,7 @@ import tf_transformations
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2):
+    def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2, positions_file=None):
         super().__init__()
 
         if not rclpy.ok():
@@ -26,13 +26,31 @@ class TurtleBotNavEnv(gym.Env):
         
         # 地图边界和位置生成配置
         self.map_bounds = map_bounds if map_bounds is not None else {
-            'x_min': -1.5, 'x_max': 1.5, 'y_min': -1.5, 'y_max': 1.5
+            'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2
         }
         self.min_distance = min_distance  # 起点和目标之间的最小距离
         
         # Placeholder values - will be set by reset() before first use
         self.start_position = np.array([0.0, 0.0], dtype=np.float32)
         self.goal_position = np.array([2.0, 2.0], dtype=np.float32)
+
+        # 加载预定义起终点对
+        self.positions = None
+        self.position_index = 0
+        if positions_file is None:
+            positions_file = '/home/turtlebot4/turtlebot4_lite_drl/positions_6000.json'
+        try:
+            import json
+            with open(positions_file, 'r') as f:
+                self.positions = json.load(f)
+            if not isinstance(self.positions, list) or len(self.positions) == 0:
+                self.positions = None
+                self._print_and_log("positions_6000.json 加载失败或为空，仍将使用随机起终点！")
+            else:
+                self._print_and_log(f"已加载{len(self.positions)}对起终点，将依次使用。")
+        except Exception as e:
+            self.positions = None
+            self._print_and_log(f"未能加载positions_6000.json: {e}，仍将使用随机起终点！")
 
         # Velocity limits (use constants so clipping is consistent)
         self.MAX_LINEAR_VEL = 3.0
@@ -103,7 +121,7 @@ class TurtleBotNavEnv(gym.Env):
             # 如果数据不足640，补齐为64维
             padded = np.pad(raw_data, (0, 640-raw_data.shape[0]), constant_values=12.0)
             processed = [np.min(padded[i*10:(i+1)*10]) for i in range(64)]
-        # 转成 numpy 数组并截断：将所有 >= 2 的测距设为 1.5，保留小于 2 的值
+        # 转成numpy数组并截断：将所有>=2的测距设为2，保留小于2的值
         processed = np.clip(processed, 0.0, 2)
         self.lidar_data = processed
 
@@ -177,13 +195,24 @@ class TurtleBotNavEnv(gym.Env):
         return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
     def reset(self, *, seed=None, options=None):
-        """Reset the environment with new random start and goal positions."""
-        
+        """Reset the environment with new start and goal positions from positions_6000.json（如有），否则随机。"""
         # Call parent reset first to handle seeding
         super().reset(seed=seed)
-        
-        # Generate new random positions (will use the seed set by super().reset())
-        self.start_position, self.goal_position = self._generate_random_positions()
+
+        # 使用预定义起终点对
+        if self.positions is not None and len(self.positions) > 0:
+            pair = self.positions[self.position_index % len(self.positions)]
+            self.position_index += 1
+            try:
+                start = np.array(pair['start'], dtype=np.float32)
+                goal = np.array(pair['goal'], dtype=np.float32)
+                self.start_position = start
+                self.goal_position = goal
+            except Exception as e:
+                self._print_and_log(f"positions_6000.json 格式错误，使用随机起终点: {e}")
+                self.start_position, self.goal_position = self._generate_random_positions()
+        else:
+            self.start_position, self.goal_position = self._generate_random_positions()
 
         # Send stop command
         self._send_stop_command()
@@ -354,31 +383,31 @@ class TurtleBotNavEnv(gym.Env):
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -50
+            collision_reward = -100
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
         else:
             distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
             distance_improvement = self.prev_distance_to_goal - distance_to_goal
-            alpha = 20.0  # 增加正向奖励，让靠近目标更有吸引力
-            beta = 20.0   # 适度惩罚远离目标的行为
-            step_penalty_coef = 0.05
+            alpha = 20.0  
+            beta = 20.0   
+            step_penalty = 0.05
             distance_reward = 0.0
             if distance_improvement > 0:
                 distance_reward = alpha * distance_improvement
-                # Update progress time
                 if hasattr(self, 'last_progress_time'):
                     self.last_progress_time = time.time()
             else:
-                distance_reward = beta * distance_improvement  # distance_improvement is negative
-            step_penalty = step_penalty_coef
+                distance_reward = beta * distance_improvement
 
-            # 添加角度评价函数
-            angle_to_goal = self.prev_angle_to_goal
-            angle_reward = -abs(angle_to_goal) * 0.1  # 根据角度差给予惩罚，角度差越大，惩罚越大
             linear_vel = self.last_action[0]
             angular_vel = abs(self.last_action[1])
             velocity_reward = linear_vel * 0.02 - angular_vel * 0.01
+
+            obstacle_penalty = 0.0
+            if min_laser < 0.3:
+                obstacle_penalty = min_laser - 0.3
+
             total_reward = distance_reward - step_penalty
             # total_reward = distance_reward - step_penalty + velocity_reward
             # self._print_and_log(

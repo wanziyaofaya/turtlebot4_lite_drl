@@ -20,7 +20,7 @@ def test_model(model_path, algorithm='PPO', episodes=10, min_distance=2):
         raise FileNotFoundError(f"模型文件 {model_path} 不存在！")
 
     # 定义地图边界
-    map_bounds = {'x_min': -2.5, 'x_max': 2.5, 'y_min': -2.5, 'y_max': 2.5}
+    map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
 
     # 初始化环境
     env = TurtleBotNavEnv(np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32))

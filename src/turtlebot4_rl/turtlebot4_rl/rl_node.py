@@ -114,7 +114,7 @@ class TurtleBotRLNode(Node):
         self.min_distance = min_distance
 
         # Map boundaries (based on the warehouse map)
-        self.map_bounds = {'x_min': -1.5, 'x_max': 1.5, 'y_min': -1.5, 'y_max': 1.5}
+        self.map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
 
         self.model_dir = os.path.join('models', self.algorithm)
         os.makedirs(self.model_dir, exist_ok=True)

@@ -115,7 +115,7 @@ if __name__ == "__main__":
         import random
         import numpy as np
         if map_bounds is None:
-            map_bounds = {'x_min': -1.5, 'x_max': 1.5, 'y_min': -1.5, 'y_max': 1.5}
+            map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
         max_attempts = 3000
         for _ in range(max_attempts):
             start_x = round(random.uniform(map_bounds['x_min'], map_bounds['x_max']), 2)
