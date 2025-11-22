@@ -65,13 +65,9 @@ class LearningRateScheduler(BaseCallback):
         return True
 
 class TurtleBotRLNode(Node):
-    """Custom callback for logging all episode metrics to Tensorboard."""
+    """ROS2节点：可训练或仅评估强化学习模型。"""
 
-    def __init__(self, env, verbose=0):
-        super().__init__(verbose)
-        self.env = env
-
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2, eval_only=False):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -79,6 +75,7 @@ class TurtleBotRLNode(Node):
         self.episodes = episodes
         self.model_path = model_path
         self.min_distance = min_distance
+        self.eval_only = eval_only  # 若为True，只进行评估不训练
 
         # Map boundaries (based on the warehouse map)
         self.map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
@@ -157,7 +154,7 @@ class TurtleBotRLNode(Node):
                     verbose=1,
                     device='cpu',
                     tensorboard_log=self.tensorboard_log,
-                    learning_rate=3e-4,
+                    learning_rate=1e-4,
                     buffer_size=1000_000,
                     batch_size=256,
                     gamma=0.99,
@@ -176,44 +173,64 @@ class TurtleBotRLNode(Node):
                 model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1, device='cpu', tensorboard_log=self.tensorboard_log)
         return model
 
+    def evaluate_model(self, deterministic: bool = True):
+        self.get_logger().info(f"Starting evaluation for {self.episodes} episodes (deterministic={deterministic})")
+        for episode in range(1, self.episodes + 1):
+            obs, _ = self.env.reset()
+            done = False
+            total_reward = 0.0
+            step_count = 0
+            while not done:
+                action, _states = self.model.predict(obs, deterministic=deterministic)
+                obs, reward, done, truncated, info = self.env.step(action)
+                done = done or truncated
+                total_reward += reward
+                step_count += 1
+            self.get_logger().info(f"[Eval] Episode {episode}: steps={step_count}, total_reward={total_reward:.3f}")
+
     def train_and_evaluate(self):
+        if self.eval_only:
+            self.get_logger().info("Evaluation-only 模式：跳过训练，直接评估已加载模型。")
+            self.evaluate_model(deterministic=True)
+            return
+
         # 计算总训练步数
         total_timesteps = self.episodes * self.timesteps
-        
         self.get_logger().info(f"Starting training with {total_timesteps:,} total timesteps")
-        self.get_logger().info(f"Environment will auto-generate random start/goal positions on each reset")
+        self.get_logger().info("Environment will auto-generate random start/goal positions on each reset")
 
         callbacks = [SuccessInfoCallback(tensorboard_log_dir=self.tensorboard_log, verbose=1)]
-        
+
         if self.algorithm == 'PPO':
             ent_scheduler = EntCoefScheduler(
-                start_value=0.015,      # 起始值
-                end_value=0.007,       # 最终值
-                step_interval=50000,   # 每5万步衰减一次
-                max_steps=500000       # 在50万步时达到最终值
+                start_value=0.015,
+                end_value=0.007,
+                step_interval=50000,
+                max_steps=500000
             )
             # callbacks.append(ent_scheduler)
         if self.algorithm == 'SAC':
             lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=300000)
-            callbacks.append(lr_scheduler)
-        # 添加训练开始时间戳
+            # callbacks.append(lr_scheduler)
+
         training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
         try:
             self.model.learn(
-                total_timesteps=total_timesteps, 
-                reset_num_timesteps=False, 
+                total_timesteps=total_timesteps,
+                reset_num_timesteps=False,
                 callback=callbacks
             )
             self.get_logger().info("Training completed!")
         except KeyboardInterrupt:
             self.get_logger().info("Training interrupted by user")
-        # 保存最终模型
+
         final_model_path = os.path.join(
-            self.model_dir, 
+            self.model_dir,
             f"{self.algorithm}_{training_session}_FINAL_{total_timesteps}steps.zip"
         )
         self.model.save(final_model_path)
         self.get_logger().info(f"Model saved: {final_model_path}")
+        self.evaluate_model(deterministic=True)
 
 
     def close(self):
@@ -231,6 +248,7 @@ def main(args=None):
     arg_parser.add_argument('--episodes', type=int, default=10, help='Multiplier for total timesteps (total = timesteps × episodes)')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
     arg_parser.add_argument('--min_distance', type=float, default=2, help='Minimum distance between start and goal positions')
+    arg_parser.add_argument('--eval_only', action='store_true', help='If set, skip training and only evaluate the provided model_path')
 
     parsed = arg_parser.parse_args(args=args)
 
@@ -242,7 +260,8 @@ def main(args=None):
             timesteps=parsed.timesteps,
             episodes=parsed.episodes,
             model_path=parsed.model_path,
-            min_distance=parsed.min_distance
+            min_distance=parsed.min_distance,
+            eval_only=parsed.eval_only
         )
         node.train_and_evaluate()
         node.close()

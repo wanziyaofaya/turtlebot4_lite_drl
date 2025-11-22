@@ -20,7 +20,6 @@ def astar(start, goal, resolution=0.01, env=None):
         # 保证还原时精度不丢失
         return (round(g[0] * resolution, 4), round(g[1] * resolution, 4))
 
-    # 若用户输入为高精度坐标，建议 resolution=0.0001
     start_g = to_grid(start)
     goal_g = to_grid(goal)
 

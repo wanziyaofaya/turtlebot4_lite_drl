@@ -2,33 +2,42 @@ from stable_baselines3.common.callbacks import BaseCallback
 from torch.utils.tensorboard import SummaryWriter
 
 class SuccessInfoCallback(BaseCallback):
-    def __init__(self, tensorboard_log_dir='tensorboard_logs', verbose=0):
+    def __init__(self, tensorboard_log_dir='tensorboard_logs', verbose=0, cycle_size: int = 10000):
         super(SuccessInfoCallback, self).__init__(verbose)
         self.tensorboard_log_dir = tensorboard_log_dir
         self.writer = SummaryWriter(log_dir=tensorboard_log_dir)
-        self.episode_success_count = 0
-        self.episode_game_count = 0
+
+        self.episode_success_count = 0      
+        self.episode_game_count = 0         
+
+        self.cycle_size = cycle_size         
+        self.cycle_success_count = 0         
+        self.cycle_episode_count = 0         
+        self.current_cycle_index = 0       
+
         self.total_timesteps = 0
 
     def _on_step(self) -> bool:
-        # Increment total timesteps
         self.total_timesteps += 1
 
-        # Check if the robot successfully reached the goal
-        if self.locals['infos'][0].get('is_success', False):
-            self.episode_success_count += 1
+        new_cycle_index = (self.total_timesteps - 1) // self.cycle_size
+        if new_cycle_index != self.current_cycle_index:
+            self.current_cycle_index = new_cycle_index
+            self.cycle_success_count = 0
+            self.cycle_episode_count = 0
 
-        # Check if the environment is resetting (due to success, collision, or timeout)
+        is_success = self.locals['infos'][0].get('is_success', False)
+        if is_success:
+            self.episode_success_count += 1
         if self.locals['dones'][0]:
             self.episode_game_count += 1
+            self.cycle_episode_count += 1
+            if is_success:
+                self.cycle_success_count += 1
 
-        # Calculate success rate
-        success_rate = (self.episode_success_count / self.episode_game_count) if self.episode_game_count > 0 else 0.0
+        cycle_success_rate = (self.cycle_success_count / self.cycle_episode_count) if self.cycle_episode_count > 0 else 0.0
 
-        # Log success rate to TensorBoard at every step
-        self.writer.add_scalar('SuccessInfo/SuccessRate', success_rate, self.total_timesteps)
-        self.writer.add_scalar('SuccessInfo/SuccessCount', self.episode_success_count, self.total_timesteps)
-
+        self.writer.add_scalar('SuccessInfo/CycleSuccessRate', cycle_success_rate, self.total_timesteps)
         return True
 
     def _on_training_end(self) -> None:
