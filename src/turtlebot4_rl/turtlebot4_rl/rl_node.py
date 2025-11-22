@@ -226,14 +226,11 @@ class TurtleBotRLNode(Node):
                 max_steps=500000       # 在50万步时达到最终值
             )
             # callbacks.append(ent_scheduler)
-
         if self.algorithm == 'SAC':
             lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=300000)
             callbacks.append(lr_scheduler)
-        
         # 添加训练开始时间戳
         training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
-
         # 添加每30个episode保存一次模型的回调
         checkpoint_dir = os.path.join(self.model_dir, "checkpoints", training_session)
         episode_checkpoint = EpisodeCheckpointCallback(
@@ -243,7 +240,6 @@ class TurtleBotRLNode(Node):
             verbose=1
         )
         callbacks.append(episode_checkpoint)
-        
         try:
             self.model.learn(
                 total_timesteps=total_timesteps, 
@@ -253,7 +249,6 @@ class TurtleBotRLNode(Node):
             self.get_logger().info("Training completed!")
         except KeyboardInterrupt:
             self.get_logger().info("Training interrupted by user")
-        
         # 保存最终模型
         final_model_path = os.path.join(
             self.model_dir, 
@@ -262,43 +257,6 @@ class TurtleBotRLNode(Node):
         self.model.save(final_model_path)
         self.get_logger().info(f"Model saved: {final_model_path}")
 
-    def evaluate_model(self, num_episodes=10):
-        """
-        评估训练好的模型。
-        :param num_episodes: 评估的回合数
-        python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --evaluate --model_path <模型路径> --num_episodes 10
-        """
-        self.get_logger().info(f"Evaluating model for {num_episodes} episodes...")
-        if not self.model_path or not os.path.isfile(self.model_path):
-            self.get_logger().error("Model path is invalid or model file does not exist.")
-            return
-        # 加载模型
-        self.model = self.model.load(self.model_path, env=self.env)
-        self.get_logger().info(f"Loaded model from {self.model_path}")
-        total_rewards = []
-        success_count = 0  # 统计成功回合数
-        for episode in range(num_episodes):
-            obs = self.env.reset()
-            done = False
-            episode_reward = 0
-            while not done:
-                action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, done, info = self.env.step(action)
-                episode_reward += reward
-            total_rewards.append(episode_reward)
-            self.get_logger().info(f"Episode {episode + 1}: Reward = {episode_reward}")
-            # 检查是否成功
-            if info.get('is_success', False):
-                success_count += 1
-        avg_reward = np.mean(total_rewards)
-        success_rate = success_count / num_episodes  # 计算成功率
-        self.get_logger().info(f"Average Reward over {num_episodes} episodes: {avg_reward}")
-        self.get_logger().info(f"Success Rate: {success_rate * 100:.2f}%")
-        # 记录到 TensorBoard
-        self.model.logger.record("eval/average_reward", avg_reward)
-        self.model.logger.record("eval/success_rate", success_rate)
-        self.model.logger.dump(self.model.num_timesteps)
-        self.env.close()
 
     def close(self):
         self.env.close()
