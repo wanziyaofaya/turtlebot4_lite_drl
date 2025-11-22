@@ -52,12 +52,6 @@ def point_in_obstacle(x, y):
     return False
 
 def is_spawn_position_valid(x, y, bounds=None, clearance=DEFAULT_CLEARANCE):
-    """
-    判断给定位置在生成起点/终点时是否合理：
-    1. 不在障碍物矩形内
-    2. 距离障碍物边界至少为 clearance
-    3. 可选：在地图边界范围内保留 clearance 缓冲
-    """
     if bounds:
         if not (bounds['x_min'] + clearance <= x <= bounds['x_max'] - clearance and
                 bounds['y_min'] + clearance <= y <= bounds['y_max'] - clearance):

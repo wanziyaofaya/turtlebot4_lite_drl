@@ -175,6 +175,7 @@ class TurtleBotRLNode(Node):
 
     def evaluate_model(self, deterministic: bool = True):
         self.get_logger().info(f"Starting evaluation for {self.episodes} episodes (deterministic={deterministic})")
+        success_count = 0 
         for episode in range(1, self.episodes + 1):
             obs, _ = self.env.reset()
             done = False
@@ -186,7 +187,10 @@ class TurtleBotRLNode(Node):
                 done = done or truncated
                 total_reward += reward
                 step_count += 1
+            if 'is_success' in info and info['is_success']:
+                success_count += 1
             self.get_logger().info(f"[Eval] Episode {episode}: steps={step_count}, total_reward={total_reward:.3f}")
+        self.get_logger().info(f"Evaluation finished. Success_rate: {success_count}/{self.episodes}")
 
     def train_and_evaluate(self):
         if self.eval_only:
@@ -209,9 +213,9 @@ class TurtleBotRLNode(Node):
                 max_steps=500000
             )
             # callbacks.append(ent_scheduler)
-        if self.algorithm == 'SAC':
-            lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=300000)
-            # callbacks.append(lr_scheduler)
+        # if self.algorithm == 'SAC':
+        #     lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=300000)
+        #     callbacks.append(lr_scheduler)
 
         training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
         try:
