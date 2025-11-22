@@ -13,39 +13,6 @@ from datetime import datetime
 import torch
 from turtlebot4_rl.custom_callback import SuccessInfoCallback
 
-class EpisodeCheckpointCallback(BaseCallback):
-    """每N个episode保存一次模型的回调"""
-    def __init__(self, save_freq_episodes: int, save_path: str, name_prefix: str = "model", verbose: int = 1):
-        super().__init__(verbose=verbose)
-        self.save_freq_episodes = save_freq_episodes
-        self.save_path = save_path
-        self.name_prefix = name_prefix
-        self.episode_count = 0
-    def _init_callback(self) -> None:
-        # 创建保存目录
-        os.makedirs(self.save_path, exist_ok=True)
-    def _on_step(self) -> bool:
-        # 检测episode结束
-        dones = self.locals.get("dones")
-        if dones is not None:
-            # 处理向量化和非向量化环境
-            if isinstance(dones, (list, tuple, np.ndarray)):
-                num_done = int(np.sum(dones))
-            else:
-                num_done = 1 if bool(dones) else 0
-            if num_done > 0:
-                self.episode_count += num_done
-                # 每N个episode保存一次模型
-                if self.episode_count % self.save_freq_episodes == 0:
-                    model_path = os.path.join(
-                        self.save_path,
-                        f"{self.name_prefix}_ep{self.episode_count}_steps{self.num_timesteps}.zip"
-                    )
-                    self.model.save(model_path)
-                    if self.verbose:
-                        print(f"[Episode Checkpoint] Saved model: {model_path}")                      
-        return True
-
 class EntCoefScheduler(BaseCallback):
     def __init__(self, start_value: float = 0.015, end_value: float = 0.007, 
                  step_interval: int = 50000, max_steps: int = 500000):
@@ -231,15 +198,6 @@ class TurtleBotRLNode(Node):
             callbacks.append(lr_scheduler)
         # 添加训练开始时间戳
         training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # 添加每30个episode保存一次模型的回调
-        checkpoint_dir = os.path.join(self.model_dir, "checkpoints", training_session)
-        episode_checkpoint = EpisodeCheckpointCallback(
-            save_freq_episodes=100,
-            save_path=checkpoint_dir,
-            name_prefix=f"{self.algorithm}_{training_session}",
-            verbose=1
-        )
-        callbacks.append(episode_checkpoint)
         try:
             self.model.learn(
                 total_timesteps=total_timesteps, 
@@ -273,8 +231,6 @@ def main(args=None):
     arg_parser.add_argument('--episodes', type=int, default=10, help='Multiplier for total timesteps (total = timesteps × episodes)')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
     arg_parser.add_argument('--min_distance', type=float, default=2, help='Minimum distance between start and goal positions')
-    arg_parser.add_argument('--evaluate', action='store_true', help='Evaluate the model instead of training')
-    arg_parser.add_argument('--num_episodes', type=int, default=10, help='Number of episodes for evaluation')
 
     parsed = arg_parser.parse_args(args=args)
 
@@ -288,11 +244,7 @@ def main(args=None):
             model_path=parsed.model_path,
             min_distance=parsed.min_distance
         )
-        # 只进行训练和评估
-        if parsed.evaluate:
-            node.evaluate_model(num_episodes=parsed.num_episodes)
-        else:
-            node.train_and_evaluate()
+        node.train_and_evaluate()
         node.close()
     except Exception as e:
         print(f"Error during execution: {e}")
