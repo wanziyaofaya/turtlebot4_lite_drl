@@ -11,6 +11,7 @@ from gz.msgs11.pose_v_pb2 import Pose_V
 import time
 import math
 import tf_transformations
+from gz.msgs11.entity_factory_pb2 import EntityFactory
 
 # Constants
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
@@ -107,6 +108,9 @@ class TurtleBotNavEnv(gym.Env):
         
         # Last action for reward calculation
         self.last_action = np.array([0.0, 0.0], dtype=np.float32)
+        self.markers_initialized = False
+        self.start_marker_name = "start_marker_visual"
+        self.goal_marker_name = "goal_marker_visual"
 
         self._print_and_log(f"TurtleBotNavEnv initialized. Call reset() before first use.")
 
@@ -221,7 +225,7 @@ class TurtleBotNavEnv(gym.Env):
         # Reset position in Gazebo
         self._reset_robot_position()
         self._print_and_log(f"Resetting robot to start: x={self.start_position[0]:.2f}, y={self.start_position[1]:.2f} | goal: x={self.goal_position[0]:.2f}, y={self.goal_position[1]:.2f}")
-        
+        self._update_marker_visuals()
         # Wait for model state to be received (updates self.current_position and self.current_yaw)
         self._wait_for_model_state()
         
@@ -497,6 +501,78 @@ class TurtleBotNavEnv(gym.Env):
 
     def _print_and_log(self, message):
         self.node.get_logger().info(message)
+
+    def _update_marker_visuals(self):
+        """Spawns or moves visual markers for start and goal in Gazebo."""
+        if not self.markers_initialized:
+            # First run: Spawn models
+            # Green for start
+            self._spawn_marker(self.start_marker_name, self.start_position, color="0 1 0 1") 
+            # Red for goal
+            self._spawn_marker(self.goal_marker_name, self.goal_position, color="1 0 0 1")   
+            self.markers_initialized = True
+        else:
+            # Subsequent runs: Move models (faster than respawning)
+            self._move_marker(self.start_marker_name, self.start_position)
+            self._move_marker(self.goal_marker_name, self.goal_position)
+
+    def _spawn_marker(self, name, position, color="1 0 0 1"):
+        """Spawns a static visual-only cylinder using EntityFactory."""
+        # SDF for a flat cylinder (marker), static, no collision
+        sdf_string = f"""
+        <?xml version="1.0" ?>
+        <sdf version="1.6">
+            <model name="{name}">
+                <static>true</static>
+                <link name="link">
+                    <visual name="visual">
+                        <geometry>
+                            <cylinder>
+                                <radius>0.2</radius>
+                                <length>0.01</length>
+                            </cylinder>
+                        </geometry>
+                        <material>
+                            <ambient>{color}</ambient>
+                            <diffuse>{color}</diffuse>
+                            <specular>0 0 0 1</specular>
+                        </material>
+                    </visual>
+                </link>
+            </model>
+        </sdf>
+        """
+        
+        req = EntityFactory()
+        req.sdf = sdf_string
+        req.pose.position.x = float(position[0])
+        req.pose.position.y = float(position[1])
+        req.pose.position.z = 0.01  # Slightly raised to avoid Z-fighting
+        
+        # Ensure this service name matches your world name (usually 'maze' based on your code)
+        service_name = "/world/maze/create" 
+        
+        try:
+            # Using Boolean as response type, largely just need to trigger the service
+            self.gz_node.request(service_name, req, EntityFactory, Boolean, 1000)
+        except Exception as e:
+            self._print_and_log(f"Failed to spawn marker {name}: {e}")
+
+    def _move_marker(self, name, position):
+        """Moves an existing marker to a new position."""
+        pose_msg = GzPose()
+        pose_msg.name = name
+        pose_msg.position.x = float(position[0])
+        pose_msg.position.y = float(position[1])
+        pose_msg.position.z = 0.01
+        pose_msg.orientation.w = 1.0 
+        
+        service_name = "/world/maze/set_pose"
+        
+        try:
+            self.gz_node.request(service_name, pose_msg, GzPose, Boolean, 300)
+        except Exception as e:
+            self._print_and_log(f"Failed to move marker {name}: {e}")
 
     def close(self):
         self._send_stop_command()

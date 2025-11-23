@@ -67,7 +67,7 @@ class LearningRateScheduler(BaseCallback):
 class TurtleBotRLNode(Node):
     """ROS2节点：可训练或仅评估强化学习模型。"""
 
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2, eval_only=False):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2, eval_only=False, eval_start_index=None):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -76,6 +76,7 @@ class TurtleBotRLNode(Node):
         self.model_path = model_path
         self.min_distance = min_distance
         self.eval_only = eval_only  # 若为True，只进行评估不训练
+        self.eval_start_index = eval_start_index  # 评估时起始 positions 索引（仅在使用 positions_6000.json 时生效）
 
         # Map boundaries (based on the warehouse map)
         self.map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
@@ -165,7 +166,7 @@ class TurtleBotRLNode(Node):
                     ent_coef='auto',
                     target_entropy=-action_dim,
                     policy_kwargs=dict(
-                        net_arch=[256, 256],
+                        net_arch=[128, 128],
                         activation_fn=torch.nn.ReLU
                     )
                 )
@@ -175,6 +176,17 @@ class TurtleBotRLNode(Node):
 
     def evaluate_model(self, deterministic: bool = True):
         self.get_logger().info(f"Starting evaluation for {self.episodes} episodes (deterministic={deterministic})")
+        # 如果用户指定了评估起始索引，并且环境已加载 positions 列表
+        if self.eval_start_index is not None:
+            if hasattr(self.env, 'positions') and self.env.positions is not None:
+                # 确保不越界
+                if 0 <= self.eval_start_index < len(self.env.positions):
+                    self.env.position_index = self.eval_start_index
+                    self.get_logger().info(f"Evaluation will begin from positions index {self.eval_start_index} (共 {len(self.env.positions)} 对)。")
+                else:
+                    self.get_logger().warning(f"指定的 eval_start_index={self.eval_start_index} 越界（0~{len(self.env.positions)-1}），忽略该设置。")
+            else:
+                self.get_logger().warning("环境未加载 positions_6000.json，eval_start_index 设置被忽略，将使用随机起终点。")
         success_count = 0 
         for episode in range(1, self.episodes + 1):
             obs, _ = self.env.reset()
@@ -253,6 +265,7 @@ def main(args=None):
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
     arg_parser.add_argument('--min_distance', type=float, default=2, help='Minimum distance between start and goal positions')
     arg_parser.add_argument('--eval_only', action='store_true', help='If set, skip training and only evaluate the provided model_path')
+    arg_parser.add_argument('--eval_start_index', type=int, default=None, help='Evaluation start index in positions_6000.json (e.g., 3000)')
 
     parsed = arg_parser.parse_args(args=args)
 
@@ -265,7 +278,8 @@ def main(args=None):
             episodes=parsed.episodes,
             model_path=parsed.model_path,
             min_distance=parsed.min_distance,
-            eval_only=parsed.eval_only
+            eval_only=parsed.eval_only,
+            eval_start_index=parsed.eval_start_index
         )
         node.train_and_evaluate()
         node.close()
