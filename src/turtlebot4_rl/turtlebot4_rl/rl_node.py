@@ -164,9 +164,9 @@ class TurtleBotRLNode(Node):
                     gradient_steps=1,
                     learning_starts=5000,
                     ent_coef='auto',
-                    target_entropy=-action_dim,
+                    target_entropy=-1.5*action_dim,
                     policy_kwargs=dict(
-                        net_arch=[128, 128],
+                        net_arch=[256, 256],
                         activation_fn=torch.nn.ReLU
                     )
                 )
