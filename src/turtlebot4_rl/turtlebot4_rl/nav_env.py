@@ -224,7 +224,7 @@ class TurtleBotNavEnv(gym.Env):
 
         # Reset position in Gazebo
         self._reset_robot_position()
-        self._print_and_log(f"Resetting robot to start: x={self.start_position[0]:.2f}, y={self.start_position[1]:.2f} | goal: x={self.goal_position[0]:.2f}, y={self.goal_position[1]:.2f}")
+        # self._print_and_log(f"Resetting robot to start: x={self.start_position[0]:.2f}, y={self.start_position[1]:.2f} | goal: x={self.goal_position[0]:.2f}, y={self.goal_position[1]:.2f}")
         self._update_marker_visuals()
         # Wait for model state to be received (updates self.current_position and self.current_yaw)
         self._wait_for_model_state()
@@ -404,16 +404,16 @@ class TurtleBotNavEnv(gym.Env):
             else:
                 distance_reward = beta * distance_improvement
             
-            goal_vec = self.goal_position - self.current_position
-            current_angle_error = np.arctan2(goal_vec[1], goal_vec[0]) - self.current_yaw
-            current_angle_error = (current_angle_error + np.pi) % (2 * np.pi) - np.pi  
-            angle_improvement = abs(self.prev_angle_to_goal) - abs(current_angle_error)
-            if angle_improvement > 0:
-                angle_improvement *= 10.0  
-            else:
-                angle_improvement *= 5.0          
+            # goal_vec = self.goal_position - self.current_position
+            # current_angle_error = np.arctan2(goal_vec[1], goal_vec[0]) - self.current_yaw
+            # current_angle_error = (current_angle_error + np.pi) % (2 * np.pi) - np.pi  
+            # angle_improvement = abs(self.prev_angle_to_goal) - abs(current_angle_error)
+            # if angle_improvement > 0:
+            #     angle_improvement *= 10.0  
+            # else:
+            #     angle_improvement *= 5.0          
 
-            total_reward = distance_reward - step_penalty + angle_improvement
+            total_reward = distance_reward - step_penalty
             # total_reward = distance_reward - step_penalty + velocity_reward
             # self._print_and_log(
             #     f"➖ REWARD: distance_reward={distance_reward:.3f}, "

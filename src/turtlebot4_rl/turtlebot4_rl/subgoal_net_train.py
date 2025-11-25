@@ -11,14 +11,15 @@ class SubgoalDataset(Dataset):
             header = f.readline()
             for line in f:
                 items = line.strip().split(',')
-                if len(items) < 646:
+                # 一行包含: 起点2 + 终点2 + 子目标2 + 激光64 = 70 列
+                if len(items) < 70:
                     continue
-                # 起点(2), 终点(2), 子目标点(2), 激光(640)
+                # 起点(2), 终点(2), 子目标点(2), 激光(64)
                 start = [float(items[0]), float(items[1])]
                 goal = [float(items[2]), float(items[3])]
                 subgoal = [float(items[4]), float(items[5])]
-                lidar = [float(x) for x in items[6:646]]
-                x = start + goal + lidar  # 输入: 2+2+640=644
+                lidar = [float(x) for x in items[6:70]]
+                x = start + goal + lidar  # 输入: 2+2+64=68
                 y = subgoal              # 输出: 2
                 self.data.append((torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)))
     def __len__(self):
@@ -30,7 +31,7 @@ class SubgoalNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(644, 256),
+            nn.Linear(68, 256),
             nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
@@ -118,6 +119,6 @@ def train_subgoal_net(dataset_path, epochs=200, batch_size=32, lr=1e-3,
     print("Training finished.")
 
 if __name__ == '__main__':
-    train_subgoal_net('models/PPO/subgoal_dataset.txt', epochs=200, batch_size=32, lr=1e-3, model_save_path='models/PPO/subgoal_net.pth')
+    train_subgoal_net('models/improved_astar_subgoal_dataset.txt', epochs=200, batch_size=32, lr=1e-3, model_save_path='models/improved_astar_subgoal_net.pth')
 
 # python3 src/turtlebot4_rl/turtlebot4_rl/subgoal_net_train.py

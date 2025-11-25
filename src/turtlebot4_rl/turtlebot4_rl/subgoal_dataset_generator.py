@@ -27,24 +27,28 @@ def generate_random_positions(map_bounds, min_distance=2):
     return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
 
-def generate_subgoal_dataset(env, model_dir, num_samples=3000, output_file='subgoal_dataset.txt', min_distance=2):
+def generate_subgoal_dataset(env, model_dir, num_samples=10000, output_file='improved_astar_subgoal_dataset.txt', min_distance=2):
     """
     生成子目标点数据集，每条数据包括：起点、终点、子目标点、激光信息。
     """
-    from turtlebot4_rl.astar import astar
+    from turtlebot4_rl.improved_astar import astar
     map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
     dataset_path = os.path.join(model_dir, output_file)
     with open(dataset_path, 'w') as f:
-        f.write('start_x,start_y,goal_x,goal_y,subgoal_x,subgoal_y,lidar_0,...,lidar_639\n')
+        f.write('start_x,start_y,goal_x,goal_y,subgoal_x,subgoal_y,lidar_0,...,lidar_63\n')
         for i in range(num_samples):
             start, goal = generate_random_positions(map_bounds, min_distance)
-            path = astar(start, goal)
+            env.start_position = start
+            env.goal_position = goal
+            obs, _ = env.reset()
+            lidar = obs[:64]
+            if getattr(env, 'lidar_data', None) is None:
+                env.lidar_data = lidar
+            path = astar(start, goal, resolution=0.01, env=env)
             if path is None or len(path) < 2:
                 print(f"[WARN] Astar failed or path too short for start={start}, goal={goal}")
                 continue
             subgoal = path[1]
-            obs, _ = env.reset(start_position=start, goal_position=goal)
-            lidar = obs[:640]
             lidar_str = ','.join([f"{v:.4f}" for v in lidar])
             f.write(f"{start[0]:.4f},{start[1]:.4f},{goal[0]:.4f},{goal[1]:.4f},{subgoal[0]:.4f},{subgoal[1]:.4f},{lidar_str}\n")
             print(f"Sample {i+1}: start={start}, goal={goal}, subgoal={subgoal}")
@@ -57,9 +61,9 @@ if __name__ == "__main__":
     from turtlebot4_rl.nav_env import TurtleBotNavEnv
 
     parser = argparse.ArgumentParser(description="生成TurtleBot子目标点数据集")
-    parser.add_argument('--model_dir', type=str, default='models/PPO', help='数据集保存目录')
-    parser.add_argument('--num_samples', type=int, default=3000, help='生成样本数量')
-    parser.add_argument('--output_file', type=str, default='subgoal_dataset.txt', help='输出文件名')
+    parser.add_argument('--model_dir', type=str, default='models', help='数据集保存目录')
+    parser.add_argument('--num_samples', type=int, default=10000, help='生成样本数量')
+    parser.add_argument('--output_file', type=str, default='improved_astar_subgoal_dataset.txt', help='输出文件名')
     parser.add_argument('--min_distance', type=float, default=2, help='起点与终点最小距离')
     parser.add_argument('--start_x', type=float, default=0.0, help='起点x坐标')
     parser.add_argument('--start_y', type=float, default=0.0, help='起点y坐标')
@@ -67,10 +71,12 @@ if __name__ == "__main__":
     parser.add_argument('--goal_y', type=float, default=5.0, help='终点y坐标')
     args = parser.parse_args()
 
-    # 初始化环境
-    start_pos = [args.start_x, args.start_y]
-    goal_pos = [args.goal_x, args.goal_y]
-    env = TurtleBotNavEnv(start_pos, goal_pos)
+    # 初始化环境（只用默认参数，起点终点后续设置）
+    env = TurtleBotNavEnv(
+        max_wait_for_observation=50.0,
+        map_bounds={'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2},
+        min_distance=args.min_distance
+    )
 
     # 生成数据集
     generate_subgoal_dataset(
