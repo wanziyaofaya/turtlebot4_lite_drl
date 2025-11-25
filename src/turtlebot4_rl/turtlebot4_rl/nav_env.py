@@ -403,16 +403,17 @@ class TurtleBotNavEnv(gym.Env):
                     self.last_progress_time = time.time()
             else:
                 distance_reward = beta * distance_improvement
+            
+            goal_vec = self.goal_position - self.current_position
+            current_angle_error = np.arctan2(goal_vec[1], goal_vec[0]) - self.current_yaw
+            current_angle_error = (current_angle_error + np.pi) % (2 * np.pi) - np.pi  
+            angle_improvement = abs(self.prev_angle_to_goal) - abs(current_angle_error)
+            if angle_improvement > 0:
+                angle_improvement *= 10.0  
+            else:
+                angle_improvement *= 5.0          
 
-            linear_vel = self.last_action[0]
-            angular_vel = abs(self.last_action[1])
-            velocity_reward = linear_vel * 0.02 - angular_vel * 0.01
-
-            obstacle_penalty = 0.0
-            if min_laser < 0.3:
-                obstacle_penalty = min_laser - 0.3
-
-            total_reward = distance_reward - step_penalty
+            total_reward = distance_reward - step_penalty + angle_improvement
             # total_reward = distance_reward - step_penalty + velocity_reward
             # self._print_and_log(
             #     f"➖ REWARD: distance_reward={distance_reward:.3f}, "
