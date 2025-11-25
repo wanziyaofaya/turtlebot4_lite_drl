@@ -224,9 +224,7 @@ class TurtleBotNavEnv(gym.Env):
 
         # Reset position in Gazebo
         self._reset_robot_position()
-        # self._print_and_log(f"Resetting robot to start: x={self.start_position[0]:.2f}, y={self.start_position[1]:.2f} | goal: x={self.goal_position[0]:.2f}, y={self.goal_position[1]:.2f}")
         self._update_marker_visuals()
-        # Wait for model state to be received (updates self.current_position and self.current_yaw)
         self._wait_for_model_state()
         
         # Reset all state variables after we have current_position
@@ -257,7 +255,6 @@ class TurtleBotNavEnv(gym.Env):
         self._take_action(action)
         self.last_action = action
 
-        # Wait for both model state and LiDAR to update
         old_position = self.current_position.copy()
         old_lidar_id = id(self.lidar_data)
         start_time = time.time()
@@ -267,15 +264,12 @@ class TurtleBotNavEnv(gym.Env):
         while (time.time() - start_time < self.max_wait_for_observation):
             rclpy.spin_once(self.node, timeout_sec=0.05)
             
-            # Check if model state has been updated via Gazebo topic callback
             if not model_updated and not np.allclose(self.current_position, old_position, atol=1e-5):
                 model_updated = True
             
-            # Check if LiDAR has been updated
             if not lidar_updated and id(self.lidar_data) != old_lidar_id:
                 lidar_updated = True
             
-            # Break if both are updated
             if model_updated and lidar_updated:
                 break
         
@@ -306,19 +300,14 @@ class TurtleBotNavEnv(gym.Env):
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
 
-        # self._print_and_log(f"Action received: {action}")
-
         linear, angular = action
-        # Clip linear and angular velocities to safety limits (ensure robot never exceeds limits)
         linear = float(np.clip(linear, self.MIN_LINEAR_VEL, self.MAX_LINEAR_VEL))
         angular = float(np.clip(angular, self.MIN_ANGULAR_VEL, self.MAX_ANGULAR_VEL))
         msg.twist.linear.x = float(linear)
         msg.twist.angular.z = float(angular)
 
-        # Store current velocities as previous velocities for next step
         self.prev_linear_vel = msg.twist.linear.x
         self.prev_angular_vel = msg.twist.angular.z
-        # self._print_and_log(f"Velocities -> linear: {self.prev_linear_vel:.3f} m/s, angular: {self.prev_angular_vel:.3f} rad/s")
 
         self.cmd_vel_pub.publish(msg)
 
@@ -331,9 +320,7 @@ class TurtleBotNavEnv(gym.Env):
 
     def _get_state(self):
         """Return the current state (LiDAR readings + robot state)."""
-        # LiDAR data
         if self.lidar_data is None:
-            # If no state available, return zeros for LiDAR数据
             lidar_data = np.zeros(64, dtype=np.float32)
         else:
             lidar_data = self.lidar_data.copy()
@@ -341,29 +328,15 @@ class TurtleBotNavEnv(gym.Env):
         # Calculate current distance and angle to goal
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
 
-        # 添加详细调试信息 - 所有坐标均为环境坐标系
-        # self._print_and_log(
-        #     f"🔍状态: "
-        #     f"起始=[{self.start_position[0]:.3f}, {self.start_position[1]:.3f}] | "
-        #     f"目标=[{self.goal_position[0]:.3f}, {self.goal_position[1]:.3f}] | "
-        #     f"当前=[{self.current_position[0]:.3f}, {self.current_position[1]:.3f}] | "
-        #     f"距离目标={distance_to_goal:.3f}m | "
-        # )
-        
-        # Calculate angle to goal relative to robot's current orientation
         goal_vector = self.goal_position - self.current_position
         angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
         angle_to_goal = angle_to_goal_global - self.current_yaw
-        # Normalize angle to [-pi, pi]
         angle_to_goal = (angle_to_goal + np.pi) % (2 * np.pi) - np.pi
         
-        # Calculate changes from previous step
         distance_change = distance_to_goal - self.prev_distance_to_goal
         angle_change = angle_to_goal - self.prev_angle_to_goal
-        # Normalize angle change to [-pi, pi]
         angle_change = (angle_change + np.pi) % (2 * np.pi) - np.pi
         
-        # Robot state: [distance_to_goal, angle_to_goal, distance_change, angle_change, prev_linear_vel, prev_angular_vel]
         robot_state = np.array([
             distance_to_goal,
             angle_to_goal,
@@ -414,13 +387,6 @@ class TurtleBotNavEnv(gym.Env):
             #     angle_improvement *= 5.0          
 
             total_reward = distance_reward - step_penalty
-            # total_reward = distance_reward - step_penalty + velocity_reward
-            # self._print_and_log(
-            #     f"➖ REWARD: distance_reward={distance_reward:.3f}, "
-            #     f"step_penalty={-step_penalty:.3f}, "
-            #     f"velocity_reward={velocity_reward:.3f} | "
-            #     f"total_reward={total_reward:.3f}"
-            # )
             return total_reward
     
     def _is_collision(self):
@@ -488,13 +454,10 @@ class TurtleBotNavEnv(gym.Env):
         """Wait for initial model state from Gazebo topic."""
         self.model_state_received = False
         
-        # self._print_and_log("Waiting for initial model state from Gazebo topic...")
-
         start_time = time.time()
         timeout = 5.0  # seconds
 
         while not self.model_state_received and (time.time() - start_time) < timeout:
-            # Allow Gazebo transport to process messages
             time.sleep(0.1)
             
         if not self.model_state_received:
@@ -513,13 +476,11 @@ class TurtleBotNavEnv(gym.Env):
             self._spawn_marker(self.goal_marker_name, self.goal_position, color="1 0 0 1")   
             self.markers_initialized = True
         else:
-            # Subsequent runs: Move models (faster than respawning)
             self._move_marker(self.start_marker_name, self.start_position)
             self._move_marker(self.goal_marker_name, self.goal_position)
 
     def _spawn_marker(self, name, position, color="1 0 0 1"):
         """Spawns a static visual-only cylinder using EntityFactory."""
-        # SDF for a flat cylinder (marker), static, no collision
         sdf_string = f"""
         <?xml version="1.0" ?>
         <sdf version="1.6">
