@@ -69,3 +69,28 @@ def is_spawn_position_valid(x, y, bounds=None, clearance=DEFAULT_CLEARANCE):
                 return False
 
     return True
+
+CLEARANCE = 0.3
+def is_position_valid(x, y, bounds=None, clearance=CLEARANCE):
+    if bounds:
+        if not (bounds['x_min'] + clearance <= x <= bounds['x_max'] - clearance and
+                bounds['y_min'] + clearance <= y <= bounds['y_max'] - clearance):
+            return False
+
+    if point_in_obstacle(x, y):
+        return False
+
+    for ox, oy, w, h in obstacles:
+        expanded_left = ox - clearance
+        expanded_right = ox + w + clearance
+        expanded_bottom = oy - clearance
+        expanded_top = oy + h + clearance
+
+        if expanded_left <= x <= expanded_right and expanded_bottom <= y <= expanded_top:
+            nearest_x = min(max(x, ox), ox + w)
+            nearest_y = min(max(y, oy), oy + h)
+            dx = x - nearest_x
+            dy = y - nearest_y
+            if dx * dx + dy * dy <= clearance * clearance:
+                return False
+    return True

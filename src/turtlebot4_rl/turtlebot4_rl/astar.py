@@ -1,5 +1,5 @@
 import heapq
-from collision import point_in_obstacle
+from collision import is_position_valid
 
 
 def astar(start, goal, resolution=0.01, env=None):
@@ -49,7 +49,7 @@ def astar(start, goal, resolution=0.01, env=None):
         for dx, dy in directions:
             neighbor = (current[0] + dx, current[1] + dy)
             neighbor_xy = from_grid(neighbor)
-            if point_in_obstacle(neighbor_xy[0], neighbor_xy[1]):
+            if not is_position_valid(neighbor_xy[0], neighbor_xy[1]):
                 continue
             if neighbor in cost_so_far and cost_so_far[neighbor] <= cost + resolution:
                 continue

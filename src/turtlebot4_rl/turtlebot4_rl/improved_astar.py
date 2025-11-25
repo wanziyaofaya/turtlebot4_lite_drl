@@ -1,6 +1,6 @@
 import heapq
 import numpy as np
-from collision import point_in_obstacle
+from collision import is_position_valid
 
 def is_obstacle_free(start, end, step_size=0.01):
     """检查从start到end的直线路径上是否有障碍物"""
@@ -10,7 +10,7 @@ def is_obstacle_free(start, end, step_size=0.01):
         t = i / steps
         x = start[0] + t * (end[0] - start[0])
         y = start[1] + t * (end[1] - start[1])
-        if point_in_obstacle(x, y):
+        if not is_position_valid(x, y):
             return False
     return True
 
@@ -89,7 +89,7 @@ def astar(start, goal, resolution=0.01, env=None):
         for dx, dy in directions:
             neighbor = (current[0] + dx, current[1] + dy)
             neighbor_xy = from_grid(neighbor)
-            if point_in_obstacle(neighbor_xy[0], neighbor_xy[1]):
+            if not is_position_valid(neighbor_xy[0], neighbor_xy[1]):
                 continue
             new_cost = cost + resolution
             if neighbor not in cost_fwd or new_cost < cost_fwd[neighbor]:
@@ -110,7 +110,7 @@ def astar(start, goal, resolution=0.01, env=None):
         for dx, dy in directions:
             neighbor = (current[0] + dx, current[1] + dy)
             neighbor_xy = from_grid(neighbor)
-            if point_in_obstacle(neighbor_xy[0], neighbor_xy[1]):
+            if not is_position_valid(neighbor_xy[0], neighbor_xy[1]):
                 continue
             new_cost = cost + resolution
             if neighbor not in cost_bwd or new_cost < cost_bwd[neighbor]:

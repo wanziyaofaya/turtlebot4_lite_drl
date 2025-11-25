@@ -8,7 +8,7 @@ class RuleBasedSubgoalGenerator:
         self.max_range = max_range
 
     def calculate_heuristic_score(x, y, dist_o, dist_g, dist_l1, dist_l2, kernel_size, resolution):
-        from turtlebot4_rl.collision import point_in_obstacle
+        from turtlebot4_rl.collision import is_position_valid
         d1 = np.tanh(np.exp((dist_o / dist_l1) ** 2) / exp((dist_l2 / dist_l1) ** 2)) * dist_l2
         d2 = dist_g
 
@@ -23,7 +23,7 @@ class RuleBasedSubgoalGenerator:
         while xi < x_max:
             yj = y_min
             while yj < y_max:
-                if point_in_obstacle(xi, yj):
+                if not is_position_valid(xi, yj):
                     point_information += 5
                 else:
                     point_information += 1
