@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.tensorboard import SummaryWriter
 
 class SubgoalDataset(Dataset):
     def __init__(self, file_path):
@@ -43,7 +44,8 @@ class SubgoalNet(nn.Module):
         return self.net(x)
 
 def train_subgoal_net(dataset_path, epochs=200, batch_size=32, lr=1e-3,
-                      model_save_path='subgoal_net.pth', train_ratio=0.8, patience=10):
+                      model_save_path='subgoal_net.pth', train_ratio=0.8, patience=10,
+                      log_dir='tensorboard_logs/subgoal_net'):
     # 设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -69,6 +71,13 @@ def train_subgoal_net(dataset_path, epochs=200, batch_size=32, lr=1e-3,
 
     best_val = float('inf')
     wait = 0
+
+    # TensorBoard writer：确保日志目录存在并创建 SummaryWriter
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+        writer = SummaryWriter(log_dir=log_dir)
+    else:
+        writer = None
 
     # 确保保存路径目录存在
     save_dir = os.path.dirname(model_save_path)
@@ -104,17 +113,34 @@ def train_subgoal_net(dataset_path, epochs=200, batch_size=32, lr=1e-3,
 
         print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
 
+        # 写入 TensorBoard（每个 epoch）
+        if writer is not None:
+            writer.add_scalar('loss/train', train_loss, epoch+1)
+            writer.add_scalar('loss/val', val_loss, epoch+1)
+            try:
+                current_lr = optimizer.param_groups[0].get('lr', None)
+                if current_lr is not None:
+                    writer.add_scalar('lr', current_lr, epoch+1)
+            except Exception:
+                pass
+
         # 早停与保存最佳模型
         if val_loss < best_val:
             best_val = val_loss
             torch.save(model.state_dict(), model_save_path)
             wait = 0
             print(f"  Best model saved (val_loss={best_val:.6f}) -> {model_save_path}")
+            if writer is not None:
+                writer.add_scalar('loss/best_val', best_val, epoch+1)
         else:
             wait += 1
             if wait >= patience:
                 print(f"Early stopping (no improvement for {patience} epochs).")
                 break
+
+    # 关闭 TensorBoard writer
+    if writer is not None:
+        writer.close()
 
     print("Training finished.")
 
