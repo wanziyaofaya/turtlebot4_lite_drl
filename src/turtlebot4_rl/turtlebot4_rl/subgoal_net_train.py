@@ -65,7 +65,7 @@ def train_subgoal_net(dataset_path, epochs=200, batch_size=32, lr=1e-3,
     model = SubgoalNet().to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
     best_val = float('inf')
     wait = 0
