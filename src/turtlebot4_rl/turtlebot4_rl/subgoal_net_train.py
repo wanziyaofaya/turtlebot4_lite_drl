@@ -32,19 +32,19 @@ class SubgoalNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(68, 256),
+            nn.Linear(68, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
             nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 2)
+            nn.Linear(128, 2)
         )
     def forward(self, x):
         return self.net(x)
 
-def train_subgoal_net(dataset_path, epochs=200, batch_size=32, lr=1e-3,
-                      model_save_path='subgoal_net.pth', train_ratio=0.8, patience=10,
+def train_subgoal_net(dataset_path, epochs=800, batch_size=128, lr=1e-3,
+                      model_save_path='subgoal_net.pth', train_ratio=0.8, patience=30,
                       log_dir='tensorboard_logs/subgoal_net'):
     # 设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -145,6 +145,6 @@ def train_subgoal_net(dataset_path, epochs=200, batch_size=32, lr=1e-3,
     print("Training finished.")
 
 if __name__ == '__main__':
-    train_subgoal_net('models/improved_astar_subgoal_dataset.txt', epochs=200, batch_size=32, lr=1e-3, model_save_path='models/improved_astar_subgoal_net.pth')
+    train_subgoal_net('models/improved_astar_subgoal_dataset.txt', epochs=800, batch_size=128, lr=1e-3, model_save_path='models/improved_astar_subgoal_net.pth')
 
 # python3 src/turtlebot4_rl/turtlebot4_rl/subgoal_net_train.py
