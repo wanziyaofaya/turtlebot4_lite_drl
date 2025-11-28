@@ -2,7 +2,7 @@
 
 # 启动Tensorboard脚本
 # 使用方法: ./start_tensorboard.sh
-
+# tensorboard --logdir tensorboard_logs/subgoal_net_v2
 echo "启动Tensorboard..."
 echo "日志目录: $(pwd)/tensorboard_logs"
 

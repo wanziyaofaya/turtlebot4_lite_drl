@@ -27,20 +27,28 @@ def generate_random_positions(map_bounds, min_distance=2):
     return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
 
-def generate_subgoal_dataset(env, model_dir, num_samples=30000, output_file='improved_astar_subgoal_dataset.txt', min_distance=2):
+def generate_subgoal_dataset(env, model_dir, num_samples=5000, output_file='improved_astar_subgoal_dataset.txt', min_distance=2):
     """
     生成子目标点数据集，每条数据包括：起点、终点、子目标点、激光信息。
     """
     from turtlebot4_rl.improved_astar import astar
     map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
     dataset_path = os.path.join(model_dir, output_file)
-    with open(dataset_path, 'w') as f:
-        f.write('start_x,start_y,goal_x,goal_y,subgoal_x,subgoal_y,lidar_0,...,lidar_63\n')
+
+    # 检查文件是否存在
+    file_exists = os.path.isfile(dataset_path)
+
+    with open(dataset_path, 'a') as f:  # 使用追加模式
+        if not file_exists:
+            # 如果文件不存在，写入表头
+            f.write('start_x,start_y,goal_x,goal_y,subgoal_x,subgoal_y,lidar_0,...,lidar_63\n')
+        
         for i in range(num_samples):
             start, goal = generate_random_positions(map_bounds, min_distance)
             env.start_position = start
             env.goal_position = goal
             obs, _ = env.reset()
+            # 提取64维激光信息
             lidar = obs[:64]
             if getattr(env, 'lidar_data', None) is None:
                 env.lidar_data = lidar
@@ -62,7 +70,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="生成TurtleBot子目标点数据集")
     parser.add_argument('--model_dir', type=str, default='models', help='数据集保存目录')
-    parser.add_argument('--num_samples', type=int, default=30000, help='生成样本数量')
+    parser.add_argument('--num_samples', type=int, default=5000, help='生成样本数量')
     parser.add_argument('--output_file', type=str, default='improved_astar_subgoal_dataset.txt', help='输出文件名')
     parser.add_argument('--min_distance', type=float, default=2, help='起点与终点最小距离')
     parser.add_argument('--start_x', type=float, default=0.0, help='起点x坐标')
