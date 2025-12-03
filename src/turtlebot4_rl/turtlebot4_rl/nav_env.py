@@ -126,7 +126,8 @@ class TurtleBotNavEnv(gym.Env):
             padded = np.pad(raw_data, (0, 640-raw_data.shape[0]), constant_values=12.0)
             processed = [np.min(padded[i*10:(i+1)*10]) for i in range(64)]
         # 转成numpy数组并截断：将所有>=1的测距设为1，保留小于1的值
-        processed = np.clip(processed, 0.0, 1)
+        # processed = np.clip(processed, 0.0, 1)
+        processed = np.array(processed, dtype=np.float32)
         self.lidar_data = processed
 
     def _gz_pose_callback(self, msg):
