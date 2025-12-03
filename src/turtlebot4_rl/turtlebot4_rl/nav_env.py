@@ -204,19 +204,19 @@ class TurtleBotNavEnv(gym.Env):
         super().reset(seed=seed)
 
         # 使用预定义起终点对
-        if self.positions is not None and len(self.positions) > 0:
-            pair = self.positions[self.position_index % len(self.positions)]
-            self.position_index += 1
-            try:
-                start = np.array(pair['start'], dtype=np.float32)
-                goal = np.array(pair['goal'], dtype=np.float32)
-                self.start_position = start
-                self.goal_position = goal
-            except Exception as e:
-                self._print_and_log(f"positions_6000.json 格式错误，使用随机起终点: {e}")
-                self.start_position, self.goal_position = self._generate_random_positions()
-        else:
-            self.start_position, self.goal_position = self._generate_random_positions()
+        # if self.positions is not None and len(self.positions) > 0:
+        #     pair = self.positions[self.position_index % len(self.positions)]
+        #     self.position_index += 1
+        #     try:
+        #         start = np.array(pair['start'], dtype=np.float32)
+        #         goal = np.array(pair['goal'], dtype=np.float32)
+        #         self.start_position = start
+        #         self.goal_position = goal
+        #     except Exception as e:
+        #         self._print_and_log(f"positions_6000.json 格式错误，使用随机起终点: {e}")
+        #         self.start_position, self.goal_position = self._generate_random_positions()
+        # else:
+        self.start_position, self.goal_position = self._generate_random_positions()
 
         # Send stop command
         self._send_stop_command()
