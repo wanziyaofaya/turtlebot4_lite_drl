@@ -14,7 +14,7 @@ import tf_transformations
 from gz.msgs11.entity_factory_pb2 import EntityFactory
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.01  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2, positions_file=None):
@@ -126,8 +126,8 @@ class TurtleBotNavEnv(gym.Env):
             padded = np.pad(raw_data, (0, 640-raw_data.shape[0]), constant_values=12.0)
             processed = [np.min(padded[i*10:(i+1)*10]) for i in range(64)]
         # 转成numpy数组并截断：将所有>=1的测距设为1，保留小于1的值
-        # processed = np.clip(processed, 0.0, 1)
-        processed = np.array(processed, dtype=np.float32)
+        processed = np.clip(processed, 0.0, 1)
+        # processed = np.array(processed, dtype=np.float32)
         self.lidar_data = processed
 
     def _gz_pose_callback(self, msg):
@@ -205,19 +205,19 @@ class TurtleBotNavEnv(gym.Env):
         super().reset(seed=seed)
 
         # 使用预定义起终点对
-        # if self.positions is not None and len(self.positions) > 0:
-        #     pair = self.positions[self.position_index % len(self.positions)]
-        #     self.position_index += 1
-        #     try:
-        #         start = np.array(pair['start'], dtype=np.float32)
-        #         goal = np.array(pair['goal'], dtype=np.float32)
-        #         self.start_position = start
-        #         self.goal_position = goal
-        #     except Exception as e:
-        #         self._print_and_log(f"positions_6000.json 格式错误，使用随机起终点: {e}")
-        #         self.start_position, self.goal_position = self._generate_random_positions()
-        # else:
-        self.start_position, self.goal_position = self._generate_random_positions()
+        if self.positions is not None and len(self.positions) > 0:
+            pair = self.positions[self.position_index % len(self.positions)]
+            self.position_index += 1
+            try:
+                start = np.array(pair['start'], dtype=np.float32)
+                goal = np.array(pair['goal'], dtype=np.float32)
+                self.start_position = start
+                self.goal_position = goal
+            except Exception as e:
+                self._print_and_log(f"positions_6000.json 格式错误，使用随机起终点: {e}")
+                self.start_position, self.goal_position = self._generate_random_positions()
+        else:
+            self.start_position, self.goal_position = self._generate_random_positions()
 
         # Send stop command
         self._send_stop_command()
@@ -282,7 +282,7 @@ class TurtleBotNavEnv(gym.Env):
         # Get current state
         done, collision, min_lidar = self._is_collision()
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        target = distance_to_goal < GOAL_REACH_THRESHOLD
+        target = distance_to_goal <= GOAL_REACH_THRESHOLD
         if target:
             done = True
             self._print_and_log("Goal reached!")
@@ -426,7 +426,8 @@ class TurtleBotNavEnv(gym.Env):
         pose_msg.position.z = 0.0
 
         # Random initial yaw for better generalization
-        yaw = np.random.uniform(-math.pi, math.pi)
+        # yaw = np.random.uniform(-math.pi, math.pi)
+        yaw = -math.pi / 2
         pose_msg.orientation.w = math.cos(yaw / 2.0)
         pose_msg.orientation.x = 0.0
         pose_msg.orientation.y = 0.0
