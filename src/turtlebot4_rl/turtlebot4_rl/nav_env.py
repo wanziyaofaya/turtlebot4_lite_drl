@@ -14,7 +14,7 @@ import tf_transformations
 from gz.msgs11.entity_factory_pb2 import EntityFactory
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.01  # 目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2, positions_file=None):
@@ -126,8 +126,8 @@ class TurtleBotNavEnv(gym.Env):
             padded = np.pad(raw_data, (0, 640-raw_data.shape[0]), constant_values=12.0)
             processed = [np.min(padded[i*10:(i+1)*10]) for i in range(64)]
         # 转成numpy数组并截断：将所有>=1的测距设为1，保留小于1的值
-        processed = np.clip(processed, 0.0, 1)
-        # processed = np.array(processed, dtype=np.float32)
+        # processed = np.clip(processed, 0.0, 1)
+        processed = np.array(processed, dtype=np.float32)
         self.lidar_data = processed
 
     def _gz_pose_callback(self, msg):
@@ -282,7 +282,7 @@ class TurtleBotNavEnv(gym.Env):
         # Get current state
         done, collision, min_lidar = self._is_collision()
         distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        target = distance_to_goal <= GOAL_REACH_THRESHOLD
+        target = distance_to_goal < GOAL_REACH_THRESHOLD
         if target:
             done = True
             self._print_and_log("Goal reached!")

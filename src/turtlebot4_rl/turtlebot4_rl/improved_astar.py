@@ -37,9 +37,7 @@ def astar(start, goal, resolution=0.01, env=None):
     lidar_data = env.lidar_data
     obstacle_count = np.sum((lidar_data >= 0) & (lidar_data <= 0.85))
     p = obstacle_count / len(lidar_data)
-
     k = 2
-
     def heuristic(a, b):
         original_heuristic = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
         heuristic = (1 + k * p) * original_heuristic
