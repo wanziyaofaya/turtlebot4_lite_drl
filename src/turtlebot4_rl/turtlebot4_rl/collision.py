@@ -70,7 +70,7 @@ def is_spawn_position_valid(x, y, bounds=None, clearance=DEFAULT_CLEARANCE):
 
     return True
 
-CLEARANCE = 0.3
+CLEARANCE = 0.4
 def is_position_valid(x, y, bounds=None, clearance=CLEARANCE):
     if bounds:
         if not (bounds['x_min'] + clearance <= x <= bounds['x_max'] - clearance and
