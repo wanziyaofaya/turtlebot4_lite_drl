@@ -141,7 +141,7 @@ print(f'AMP:           {amp_enabled}{f" ({amp_dtype})"if amp_enabled else ""}')
 
 num_embeddings = rtdl_num_embeddings.PiecewiseLinearEmbeddings(
     rtdl_num_embeddings.compute_bins(data['train']['x_num'], n_bins=128), # 将每个特征划分为128个区间
-    d_embedding=32, # 每个特征映射到32维空间
+    d_embedding=16, # 每个特征映射到16维空间
     activation=False,
     version='B',
 )
@@ -212,7 +212,7 @@ print(f'Test score before training: {evaluate("test")["score"]:.4f}')
 
 n_epochs = 300
 train_size = len(train_idx)
-batch_size = 384
+batch_size = 512
 
 # 余弦退火 + 线性 warmup 调度
 warmup_epochs = min(10, max(1, n_epochs // 5))
