@@ -70,6 +70,5 @@ def test_model(model_path, algorithm='PPO', episodes=10, min_distance=2):
     env.close()
 
 if __name__ == '__main__':
-    # 示例测试代码
     test_model(model_path='models/PPO/PPO_20251023_132205_checkpoint_ep080_ts5000.zip', algorithm='PPO', episodes=10, min_distance=2)
     # python src/turtlebot4_rl/turtlebot4_rl/test_model.py
