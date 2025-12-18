@@ -140,8 +140,8 @@ print(f'Device:        {device.type.upper()}')
 print(f'AMP:           {amp_enabled}{f" ({amp_dtype})"if amp_enabled else ""}')
 
 num_embeddings = rtdl_num_embeddings.PiecewiseLinearEmbeddings(
-    rtdl_num_embeddings.compute_bins(data['train']['x_num'], n_bins=128),
-    d_embedding=32,
+    rtdl_num_embeddings.compute_bins(data['train']['x_num'], n_bins=128), # 将每个特征划分为128个区间
+    d_embedding=32, # 每个特征映射到32维空间
     activation=False,
     version='B',
 )
@@ -279,7 +279,9 @@ for epoch in range(n_epochs):
 
     eval_val = evaluate('val')
     eval_test = evaluate('test')
-    metrics = {'val': eval_val, 'test': eval_test}
+    # 也在每个 epoch 评估训练集并记录到 TensorBoard（与 val/test 保持一致）
+    eval_train = evaluate('train')
+    metrics = {'train': eval_train, 'val': eval_val, 'test': eval_test}
     val_score = eval_val['score']
     val_score_improved = val_score > best_checkpoint['metrics']['val']['score']
 
@@ -294,6 +296,9 @@ for epoch in range(n_epochs):
     writer.add_scalar('val/r2', eval_val['r2'], epoch)
     writer.add_scalar('test/mse', eval_test['mse'], epoch)
     writer.add_scalar('test/r2', eval_test['r2'], epoch)
+    # 记录训练集的 MSE 和 R²
+    writer.add_scalar('train/mse', eval_train['mse'], epoch)
+    writer.add_scalar('train/r2', eval_train['r2'], epoch)
     # log learning rate (first param group)
     try:
         lr = optimizer.param_groups[0]['lr']
@@ -311,6 +316,7 @@ for epoch in range(n_epochs):
 
     print(
         f'{mark} [Epoch {epoch:03d}] '
+        f'Train MSE: {eval_train["mse"]:.4f} | R2: {eval_train["r2"]:.4f}  '
         f'Val MSE: {eval_val["mse"]:.4f} | R2: {eval_val["r2"]:.4f}  '
         f'Test MSE: {eval_test["mse"]:.4f} | R2: {eval_test["r2"]:.4f}'
     )
