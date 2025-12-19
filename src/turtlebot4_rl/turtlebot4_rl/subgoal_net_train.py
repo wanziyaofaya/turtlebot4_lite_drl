@@ -227,6 +227,9 @@ lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
 # TensorBoard writer - 使用时间戳区分每次运行，保留历史曲线
 run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 writer = SummaryWriter(log_dir=f'runs/tabm_{run_timestamp}')
+model_save_dir = 'models'
+os.makedirs(model_save_dir, exist_ok=True)
+model_save_path = os.path.join(model_save_dir, f'subgoal_tabm_{run_timestamp}.pt')
 
 metrics = {'val': {'score': -math.inf}, 'test': {'score': -math.inf}}
 
@@ -238,7 +241,7 @@ def make_checkpoint() -> dict[str, Any]:
     })
 
 best_checkpoint = make_checkpoint()
-patience = 40
+patience = 30
 remaining_patience = patience
 
 print("\nStarting Training...")
@@ -334,6 +337,24 @@ print('='*40)
 print(f'MSE : {final_res["mse"]:.6f}')
 print(f'R²  : {final_res["r2"]:.6f}')
 print(f'RMSE: {(-final_res["score"]):.6f}')
+
+torch.save(
+    {
+        'model_state_dict': best_checkpoint['model'],
+        'optimizer_state_dict': best_checkpoint['optimizer'],
+        'preprocessing': preprocessing,
+        'regression_label_stats': regression_label_stats,
+        'task_type': task_type,
+        'timestamp': run_timestamp,
+        'model_params': {
+            'n_num_features': n_num_features,
+            'n_outputs': n_outputs,
+            'cat_cardinalities': cat_cardinalities,
+        },
+    },
+    model_save_path,
+)
+print(f'Best model checkpoint saved to {model_save_path}')
 
 # Close TensorBoard writer
 writer.close()
