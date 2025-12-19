@@ -210,7 +210,7 @@ def evaluate(part: str) -> dict:
 
 print(f'Test score before training: {evaluate("test")["score"]:.4f}')
 
-n_epochs = 300
+n_epochs = 400
 train_size = len(train_idx)
 batch_size = 512
 
@@ -238,7 +238,7 @@ def make_checkpoint() -> dict[str, Any]:
     })
 
 best_checkpoint = make_checkpoint()
-patience = 30
+patience = 40
 remaining_patience = patience
 
 print("\nStarting Training...")
