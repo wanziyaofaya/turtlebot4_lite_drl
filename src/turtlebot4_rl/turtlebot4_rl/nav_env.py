@@ -10,6 +10,7 @@ from gz.msgs11.boolean_pb2 import Boolean
 from gz.msgs11.pose_v_pb2 import Pose_V
 import time
 import math
+import os
 import tf_transformations
 from gz.msgs11.entity_factory_pb2 import EntityFactory
 
@@ -39,19 +40,24 @@ class TurtleBotNavEnv(gym.Env):
         self.positions = None
         self.position_index = 0
         if positions_file is None:
-            positions_file = '/home/turtlebot4/turtlebot4_lite_drl/positions_6000.json'
+            # 优先尝试当前工作目录下的文件
+            if os.path.exists('positions_6000.json'):
+                positions_file = os.path.abspath('positions_6000.json')
+            else:
+                positions_file = '/home/turtlebot4/turtlebot4_lite_drl/positions_6000.json'
+        
         try:
             import json
             with open(positions_file, 'r') as f:
                 self.positions = json.load(f)
             if not isinstance(self.positions, list) or len(self.positions) == 0:
                 self.positions = None
-                self._print_and_log("positions_6000.json 加载失败或为空，仍将使用随机起终点！")
+                self._print_and_log(f"{positions_file} 加载失败或为空，仍将使用随机起终点！")
             else:
-                self._print_and_log(f"已加载{len(self.positions)}对起终点，将依次使用。")
+                self._print_and_log(f"已从 {positions_file} 加载{len(self.positions)}对起终点，将依次使用。")
         except Exception as e:
             self.positions = None
-            self._print_and_log(f"未能加载positions_6000.json: {e}，仍将使用随机起终点！")
+            self._print_and_log(f"未能加载 {positions_file}: {e}，仍将使用随机起终点！")
 
         # Velocity limits (use constants so clipping is consistent)
         self.MAX_LINEAR_VEL = 3.0
@@ -218,6 +224,8 @@ class TurtleBotNavEnv(gym.Env):
                 self.start_position, self.goal_position = self._generate_random_positions()
         else:
             self.start_position, self.goal_position = self._generate_random_positions()
+
+        self._print_and_log(f"Episode Reset: Start Position: {self.start_position}, Goal Position: {self.goal_position}")
 
         # Send stop command
         self._send_stop_command()
