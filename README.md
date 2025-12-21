@@ -1,4 +1,5 @@
 # A DRL framework for turtlebot4-lite
+![turtlebot4-lite path planning](turtlebot4-lite-drl.gif)
 ## Install wsl-ubuntu24.04
 ```
 wsl --install Ubuntu-24.04
@@ -35,7 +36,7 @@ source $HOME/.local/bin/env
 uv venv --system-site-packages
 source .venv/bin/activate
 # source venv/bin/activate
-uv pip install -r requirements.txt
+uv pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 ## Compile and build your workspace
 ```
@@ -43,13 +44,13 @@ colcon build --symlink-install
 source install/setup.bash
 source install/local_setup.bash
 source /opt/ros/jazzy/setup.bash
-source ~/turtlebot4_lite_drl/install/local_setup.bash
 export GAZEBO_PLUGIN_PATH=/opt/ros/jazzy/lib
 ```
 ## Run code
 ```
 ros2 launch turtlebot4_gz_bringup turtlebot4_gz.launch.py model:=lite world:=maze
 python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 20000 --episodes 500
-python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 5000 --episodes 2000  --algorithm SAC
-python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --episodes 20  --algorithm SAC --model_path /home/turtlebot4/turtlebot4_lite_drl/models/SAC/SAC_20251122_194045_FINAL_10000000steps.zip --eval_only  --eval_start_index 3000
+python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 5000 --episodes 2000 --algorithm SAC
+python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 5000 --episodes 2000 --model_path models/PPO/PPO_20251024_013630_checkpoint_ep140_ts5000.zip
+tensorboard --logdir tensorboard_logs
 ```
