@@ -40,6 +40,7 @@ uv pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 ## Compile and build your workspace
 ```
+sudo rm -rf build install log
 colcon build --symlink-install
 source install/setup.bash
 source install/local_setup.bash
