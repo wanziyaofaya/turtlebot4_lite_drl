@@ -8,17 +8,17 @@ from gz.transport14 import Node as GzNode
 from gz.msgs11.pose_pb2 import Pose as GzPose
 from gz.msgs11.boolean_pb2 import Boolean
 from gz.msgs11.pose_v_pb2 import Pose_V
+from gz.msgs11.entity_factory_pb2 import EntityFactory  # 新增导入
 import time
 import math
-import os
 import tf_transformations
-from gz.msgs11.entity_factory_pb2 import EntityFactory
+import os
 
 # Constants
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, max_wait_for_observation=50.0, map_bounds=None, min_distance=2, positions_file=None):
+    def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=2.0, positions_file=None):
         super().__init__()
 
         if not rclpy.ok():
@@ -35,7 +35,6 @@ class TurtleBotNavEnv(gym.Env):
         # Placeholder values - will be set by reset() before first use
         self.start_position = np.array([0.0, 0.0], dtype=np.float32)
         self.goal_position = np.array([2.0, 2.0], dtype=np.float32)
-
         # 加载预定义起终点对
         self.positions = None
         self.position_index = 0
@@ -44,7 +43,7 @@ class TurtleBotNavEnv(gym.Env):
             if os.path.exists('positions_6000.json'):
                 positions_file = os.path.abspath('positions_6000.json')
             else:
-                positions_file = '/home/turtlebot4/turtlebot4_lite_drl/positions_6000.json'
+                positions_file = '/home/wanzi/turtlebot4_lite_drl/positions_6000.json'
         
         try:
             import json
@@ -58,25 +57,28 @@ class TurtleBotNavEnv(gym.Env):
         except Exception as e:
             self.positions = None
             self._print_and_log(f"未能加载 {positions_file}: {e}，仍将使用随机起终点！")
-
         # Velocity limits (use constants so clipping is consistent)
-        self.MAX_LINEAR_VEL = 3.0
-        self.MIN_LINEAR_VEL = 0.0
+        self.MAX_LINEAR_VEL = 3.0  # 降低速度，防止因速度过快刹不住车
         self.MAX_ANGULAR_VEL = 1.9
-        self.MIN_ANGULAR_VEL = -1.9
+        
+        # LiDAR & Goal configuration
+        self.LIDAR_MAX_RANGE = 6.0  # Maximum LiDAR range in meters
+        self.MAX_GOAL_DIST = 6.0  # Maximum distance for goal normalization
 
-        # Define action spaces
+        # Define action spaces in normalized range [-1, 1]
+        # action[0]: normalized linear command, action[1]: normalized angular command
         self.action_space = gym.spaces.Box(
-            low=np.array([self.MIN_LINEAR_VEL, self.MIN_ANGULAR_VEL], dtype=np.float32),
-            high=np.array([self.MAX_LINEAR_VEL, self.MAX_ANGULAR_VEL], dtype=np.float32),
+            low=np.array([-1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32
         )
 
         # Continuous observation (64维LiDAR最小值 + robot state)
         # Robot state: [distance_to_goal, angle_to_goal, distance_change, angle_change, prev_linear_vel, prev_angular_vel]
+        # Normalized observation space: All values roughly in [-1, 1] or [0, 1]
         self.observation_space = gym.spaces.Box(
-            low=np.concatenate([np.zeros(64), np.array([0.0, -np.pi, -20.0, -2*np.pi, 0.0, -1.9])]),
-            high=np.concatenate([np.full(64, 12.0), np.array([20.0, np.pi, 20.0, 2*np.pi, 3.0, 1.9])]),
+            low=np.concatenate([np.zeros(32), np.array([0.0, -1.0, -1.0, -1.0, 0.0, -1.0])]),
+            high=np.concatenate([np.ones(32), np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])]),
             dtype=np.float32
         )
 
@@ -96,6 +98,8 @@ class TurtleBotNavEnv(gym.Env):
 
         # State - will be properly initialized by reset()
         self.lidar_data = None
+        self.lidar_seq = 0
+        self.min_lidar = None
         self.current_position = None
         self.current_yaw = 0.0
         self.prev_distance_to_goal = 0.0
@@ -107,13 +111,23 @@ class TurtleBotNavEnv(gym.Env):
         self.gazebo_position = None
         self.gazebo_orientation = None
         self.model_state_received = False
+        self.model_state_seq = 0
+        self.last_model_state_time = 0.0
+        self.last_reset_yaw = 0.0
 
         # Previous velocities for robot state
         self.prev_linear_vel = 0.0
         self.prev_angular_vel = 0.0
+
+        # Cached goal metrics (reused within a step to reduce duplicate math)
+        self._cached_model_seq = None
+        self._cached_distance_to_goal = None
+        self._cached_angle_to_goal = None
         
         # Last action for reward calculation
         self.last_action = np.array([0.0, 0.0], dtype=np.float32)
+
+        # Visualization State
         self.markers_initialized = False
         self.start_marker_name = "start_marker_visual"
         self.goal_marker_name = "goal_marker_visual"
@@ -122,49 +136,62 @@ class TurtleBotNavEnv(gym.Env):
 
     def scan_callback(self, msg):
         """Updates state with current scan data."""
-        raw_data = np.array(msg.ranges, dtype=np.float32)
-        raw_data[np.isinf(raw_data)] = 12.0
-        # 分成64段，每段10个数据，取最小值
-        if raw_data.shape[0] >= 640:
-            processed = [np.min(raw_data[i*10:(i+1)*10]) for i in range(64)]
-        else:
-            # 如果数据不足640，补齐为64维
-            padded = np.pad(raw_data, (0, 640-raw_data.shape[0]), constant_values=12.0)
-            processed = [np.min(padded[i*10:(i+1)*10]) for i in range(64)]
-        # 转成numpy数组并截断：将所有>=1的测距设为1，保留小于1的值
-        processed = np.clip(processed, 0.0, 1)
-        # processed = np.array(processed, dtype=np.float32)
-        self.lidar_data = processed
+        raw_data = np.asarray(msg.ranges, dtype=np.float32)
+        raw_data[np.isinf(raw_data)] = self.LIDAR_MAX_RANGE
+
+        # Ensure a fixed length (640 = 32 * 20)
+        if raw_data.size < 640:
+            raw_data = np.pad(raw_data, (0, 640 - raw_data.size), constant_values=self.LIDAR_MAX_RANGE)
+        elif raw_data.size > 640:
+            raw_data = raw_data[:640]
+
+        # Vectorized min-pooling into 32 beams
+        processed = raw_data.reshape(32, 20).min(axis=1)
+        self.lidar_data = processed  # np.ndarray(float32), avoids per-step list->array conversion
+        self.min_lidar = float(processed.min())
+        self.lidar_seq += 1
 
     def _gz_pose_callback(self, msg):
         """Callback for Gazebo pose topic - receives Pose_V message"""
         try:
-            # Find the main robot pose (not link poses)
+            # /model/<name>/pose sometimes includes multiple poses (model + links).
+            # Prefer the model pose; if name matching is inconsistent, fall back safely.
             robot_pose = None
-            for pose in msg.pose:
-                # Look for the main robot entity pose
-                if pose.name == self.robot_model_name:
-                    robot_pose = pose
-                    break
-            
+
+            if hasattr(msg, 'pose') and msg.pose:
+                # 1) Exact match
+                for pose in msg.pose:
+                    if pose.name == self.robot_model_name:
+                        robot_pose = pose
+                        break
+
+                # 2) Best-effort match: choose the shortest name containing the model name
+                if robot_pose is None:
+                    candidates = [p for p in msg.pose if self.robot_model_name in (p.name or "")]
+                    if candidates:
+                        robot_pose = min(candidates, key=lambda p: len(p.name or ""))
+
+                # 3) Fallback: take the first pose
+                if robot_pose is None:
+                    robot_pose = msg.pose[0]
+
             if robot_pose is not None:
-                # Store Gazebo position and orientation
-                self.gazebo_position = np.array([
-                    robot_pose.position.x,
-                    robot_pose.position.y,
-                    robot_pose.position.z
-                ], dtype=np.float32)
-                
+                self.gazebo_position = np.array(
+                    [robot_pose.position.x, robot_pose.position.y, robot_pose.position.z],
+                    dtype=np.float32,
+                )
+
                 self.gazebo_orientation = [
                     robot_pose.orientation.x,
                     robot_pose.orientation.y,
                     robot_pose.orientation.z,
-                    robot_pose.orientation.w
+                    robot_pose.orientation.w,
                 ]
-                
-                # Convert to environment coordinates
+
                 self._update_env_position()
                 self.model_state_received = True
+                self.model_state_seq += 1
+                self.last_model_state_time = time.time()
                 
         except Exception as e:
             pass
@@ -183,7 +210,7 @@ class TurtleBotNavEnv(gym.Env):
         """生成随机起点和目标位置，确保不在障碍物内且满足最小距离要求"""
         from turtlebot4_rl.collision import is_spawn_position_valid
         
-        max_attempts = 3000
+        max_attempts = 1000
         for _ in range(max_attempts):
             start_x = round(np.random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
             start_y = round(np.random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
@@ -206,11 +233,13 @@ class TurtleBotNavEnv(gym.Env):
         return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
     def reset(self, *, seed=None, options=None):
-        """Reset the environment with new start and goal positions from positions_6000.json（如有），否则随机。"""
+        """Reset the environment with new random start and goal positions."""
+        
         # Call parent reset first to handle seeding
         super().reset(seed=seed)
-
-        # 使用预定义起终点对
+        
+        # Generate new random positions (will use the seed set by super().reset())
+         # 使用预定义起终点对
         if self.positions is not None and len(self.positions) > 0:
             pair = self.positions[self.position_index % len(self.positions)]
             self.position_index += 1
@@ -231,13 +260,22 @@ class TurtleBotNavEnv(gym.Env):
         self._send_stop_command()
         self.done = False
 
+        # Update visuals for start and goal in Gazebo
+        self._update_marker_visuals()
+
         # Reset position in Gazebo
         self._reset_robot_position()
-        self._update_marker_visuals()
+        self._print_and_log(f"Resetting robot to start: x={self.start_position[0]:.2f}, y={self.start_position[1]:.2f} | goal: x={self.goal_position[0]:.2f}, y={self.goal_position[1]:.2f}")
+        
+        # Wait for model state to be received (updates self.current_position and self.current_yaw)
         self._wait_for_model_state()
         
         # Reset all state variables after we have current_position
         self.lidar_data = None
+        self.min_lidar = None
+        self._cached_model_seq = None
+        self._cached_distance_to_goal = None
+        self._cached_angle_to_goal = None
         self.prev_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         
         # Calculate initial angle to goal
@@ -264,38 +302,55 @@ class TurtleBotNavEnv(gym.Env):
         self._take_action(action)
         self.last_action = action
 
-        old_position = self.current_position.copy()
-        old_lidar_id = id(self.lidar_data)
-        start_time = time.time()
+        # Wait for both model state and LiDAR to update
+        initial_model_seq = self.model_state_seq
+        initial_lidar_seq = self.lidar_seq
+        deadline = time.monotonic() + float(self.max_wait_for_observation)
         model_updated = False
         lidar_updated = False
         
-        while (time.time() - start_time < self.max_wait_for_observation):
-            rclpy.spin_once(self.node, timeout_sec=0.05)
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            rclpy.spin_once(self.node, timeout_sec=min(0.05, max(0.0, remaining)))
             
-            if not model_updated and not np.allclose(self.current_position, old_position, atol=1e-5):
+            # Check if model state has been updated via Gazebo topic callback
+            if not model_updated and self.model_state_seq != initial_model_seq:
                 model_updated = True
             
-            if not lidar_updated and id(self.lidar_data) != old_lidar_id:
+            # Check if LiDAR has been updated
+            if not lidar_updated and self.lidar_seq != initial_lidar_seq:
                 lidar_updated = True
             
+            # Break if both are updated
             if model_updated and lidar_updated:
                 break
         
         if not lidar_updated:
             raise RuntimeError("No LiDAR data received.")
-        if not model_updated:
-            self._print_and_log("Warning: Model state may not have been updated after action.")
+
+        # Compute goal metrics once and cache for reuse in reward/state
+        distance_to_goal, angle_to_goal = self._compute_goal_metrics()
+        self._cached_model_seq = self.model_state_seq
+        self._cached_distance_to_goal = distance_to_goal
+        self._cached_angle_to_goal = angle_to_goal
 
         # Get current state
         done, collision, min_lidar = self._is_collision()
-        distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         target = distance_to_goal < GOAL_REACH_THRESHOLD
         if target:
             done = True
             self._print_and_log("Goal reached!")
+        elif not model_updated:
+            done = True
+            self._print_and_log("Warning: Model state may not have been updated after action.")
 
-        reward = self._calculate_reward(target, collision, min_lidar)
+        reward = self._calculate_reward(
+            target,
+            collision,
+            model_updated,
+            distance_to_goal=distance_to_goal,
+            angle_to_goal=angle_to_goal,
+        )
         info = {'is_success': False, 'is_collision': False}
         if target:
             info['is_success'] = True
@@ -304,17 +359,30 @@ class TurtleBotNavEnv(gym.Env):
         return self._get_state(), reward, done, False, info
 
     def _take_action(self, action):
-        """Send velocity command to the robot."""
+        """Send velocity command to the robot.
+
+        The RL policy outputs normalized actions in [-1, 1].
+        Here we map them to real robot linear/angular velocities.
+        """
         msg = TwistStamped()
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
 
-        linear, angular = action
-        linear = float(np.clip(linear, self.MIN_LINEAR_VEL, self.MAX_LINEAR_VEL))
-        angular = float(np.clip(angular, self.MIN_ANGULAR_VEL, self.MAX_ANGULAR_VEL))
+        # Ensure action is a numpy array and clipped to [-1, 1]
+        action = np.asarray(action, dtype=np.float32)
+        action = np.clip(action, -1.0, 1.0)
+        norm_linear, norm_angular = action
+
+        # Map normalized linear action [-1, 1] -> [0, MAX_LINEAR_VEL]
+        linear = (norm_linear + 1.0) / 2.0 * self.MAX_LINEAR_VEL
+
+        # Map normalized angular action [-1, 1] -> [-MAX_ANGULAR_VEL, MAX_ANGULAR_VEL]
+        angular = norm_angular * self.MAX_ANGULAR_VEL
+
         msg.twist.linear.x = float(linear)
         msg.twist.angular.z = float(angular)
 
+        # Store current velocities as previous velocities for next step
         self.prev_linear_vel = msg.twist.linear.x
         self.prev_angular_vel = msg.twist.angular.z
 
@@ -329,30 +397,48 @@ class TurtleBotNavEnv(gym.Env):
 
     def _get_state(self):
         """Return the current state (LiDAR readings + robot state)."""
+        # LiDAR data
         if self.lidar_data is None:
-            lidar_data = np.zeros(64, dtype=np.float32)
+            raise RuntimeError("LiDAR data is not available.")
         else:
-            lidar_data = self.lidar_data.copy()
+            # Work on a copy so the original sensor history remains untouched
+            lidar_array = np.asarray(self.lidar_data, dtype=np.float32)
+            # Clip to max range and normalize to [0, 1]
+            # lidar_data = np.clip(lidar_array, 0.0, self.LIDAR_MAX_RANGE) / self.LIDAR_MAX_RANGE
+            lidar_data = np.clip(lidar_array, 0.0, 1.0)
+            
         
-        # Calculate current distance and angle to goal
-        distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-
-        goal_vector = self.goal_position - self.current_position
-        angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
-        angle_to_goal = angle_to_goal_global - self.current_yaw
-        angle_to_goal = (angle_to_goal + np.pi) % (2 * np.pi) - np.pi
+        # Calculate current distance and angle to goal (reuse cached metrics when valid)
+        if (
+            getattr(self, '_cached_model_seq', None) == self.model_state_seq
+            and self._cached_distance_to_goal is not None
+            and self._cached_angle_to_goal is not None
+        ):
+            distance_to_goal = float(self._cached_distance_to_goal)
+            angle_to_goal = float(self._cached_angle_to_goal)
+        else:
+            distance_to_goal, angle_to_goal = self._compute_goal_metrics()
         
+        # Calculate changes from previous step
         distance_change = distance_to_goal - self.prev_distance_to_goal
         angle_change = angle_to_goal - self.prev_angle_to_goal
+        # Normalize angle change to [-pi, pi]
         angle_change = (angle_change + np.pi) % (2 * np.pi) - np.pi
         
+        # Normalize robot state components
+        norm_distance = np.clip(distance_to_goal / self.MAX_GOAL_DIST, 0.0, 1.0) # Assuming max distance approx 6m
+        norm_angle = angle_to_goal / np.pi # [-1, 1]
+        norm_linear_vel = self.prev_linear_vel / self.MAX_LINEAR_VEL # [0, 1]
+        norm_angular_vel = self.prev_angular_vel / self.MAX_ANGULAR_VEL # [-1, 1] (approx)
+
+        # Robot state: [distance_to_goal, angle_to_goal, distance_change, angle_change, prev_linear_vel, prev_angular_vel]
         robot_state = np.array([
-            distance_to_goal,
-            angle_to_goal,
+            norm_distance,
+            norm_angle,
             distance_change,
             angle_change,
-            self.prev_linear_vel,
-            self.prev_angular_vel
+            norm_linear_vel,
+            norm_angular_vel
         ], dtype=np.float32)
         
         # Update history for next step
@@ -363,46 +449,68 @@ class TurtleBotNavEnv(gym.Env):
         combined_state = np.concatenate([lidar_data, robot_state])
         return combined_state
 
-    def _calculate_reward(self, target, collision, min_laser):
+    def _compute_goal_metrics(self):
+        """Compute distance to goal and angle-to-goal in robot frame; angle normalized to [-pi, pi]."""
+        distance_to_goal = float(np.linalg.norm(self.goal_position - self.current_position))
+        goal_vector = self.goal_position - self.current_position
+        angle_to_goal_global = float(np.arctan2(goal_vector[1], goal_vector[0]))
+        angle_to_goal = angle_to_goal_global - float(self.current_yaw)
+        angle_to_goal = (angle_to_goal + np.pi) % (2 * np.pi) - np.pi
+        return distance_to_goal, float(angle_to_goal)
+
+    def _calculate_reward(self, target, collision, model_updated, distance_to_goal=None, angle_to_goal=None):
         if target:
-            target_reward = 100
+            target_reward = 100.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -100
+            collision_reward = -100.0
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
+        elif not model_updated:
+            no_update_penalty = -100.0
+            self._print_and_log(f"⚠️ REWARD: No model update! reward={no_update_penalty:.3f}")
+            return no_update_penalty
         else:
-            distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+            if distance_to_goal is None or angle_to_goal is None:
+                distance_to_goal, angle_to_goal = self._compute_goal_metrics()
+            else:
+                distance_to_goal = float(distance_to_goal)
+                angle_to_goal = float(angle_to_goal)
+
             distance_improvement = self.prev_distance_to_goal - distance_to_goal
-            alpha = 20.0  
-            beta = 20.0   
-            step_penalty = 0.05
-            distance_reward = 0.0
+
+            # Convert angle to a [0, 1] alignment factor.
+            # 0 rad -> 1.0 (fully aligned), pi rad -> 0.0 (opposite direction)
+            heading_scale = float(np.clip((np.cos(angle_to_goal) + 1.0) / 2.0, 0.0, 1.0))
+
+            # === 距离改进奖励/惩罚 ===
             if distance_improvement > 0:
-                distance_reward = alpha * distance_improvement
+                # 前进时：对齐越好，奖励越大
+                distance_reward = distance_improvement * heading_scale
                 if hasattr(self, 'last_progress_time'):
                     self.last_progress_time = time.time()
             else:
-                distance_reward = beta * distance_improvement
-            
-            # goal_vec = self.goal_position - self.current_position
-            # current_angle_error = np.arctan2(goal_vec[1], goal_vec[0]) - self.current_yaw
-            # current_angle_error = (current_angle_error + np.pi) % (2 * np.pi) - np.pi  
-            # angle_improvement = abs(self.prev_angle_to_goal) - abs(current_angle_error)
-            # if angle_improvement > 0:
-            #     angle_improvement *= 10.0  
-            # else:
-            #     angle_improvement *= 5.0          
+                # 后退时：固定为 1，不根据朝向缩放惩罚
+                distance_reward = distance_improvement
 
-            total_reward = distance_reward - step_penalty
+            # === 步数惩罚 ===
+            step_penalty = 0.5
+
+            # === 计算总奖励 ===
+            total_reward = 100 * distance_reward - step_penalty
+
             return total_reward
     
     def _is_collision(self):
         """Check if a collision has occurred based on LiDAR data."""
         collision_threshold = 0.25
-        min_lidar = np.min(self.lidar_data) if self.lidar_data is not None else float('inf')
-        min_lidar = min_lidar
+        if self.lidar_data is None:
+            min_lidar = float('inf')
+        elif self.min_lidar is not None:
+            min_lidar = float(self.min_lidar)
+        else:
+            min_lidar = float(np.min(self.lidar_data))
         collision = min_lidar < collision_threshold
         if collision:
             self._print_and_log(f"Collision detected! min_lidar={min_lidar:.4f}")
@@ -414,10 +522,10 @@ class TurtleBotNavEnv(gym.Env):
         Return True if new state is received, False otherwise.
         """
         start_time = time.time()
-        initial_id = id(self.lidar_data)
-        while (id(self.lidar_data) == initial_id) and (time.time() - start_time < self.max_wait_for_observation):
+        initial_seq = self.lidar_seq
+        while (self.lidar_seq == initial_seq) and (time.time() - start_time < self.max_wait_for_observation):
             rclpy.spin_once(self.node, timeout_sec=0.05)
-        if id(self.lidar_data) == initial_id:
+        if self.lidar_seq == initial_seq:
             self._print_and_log("LiDAR data did not update in time.")
             return False
         else:
@@ -434,8 +542,8 @@ class TurtleBotNavEnv(gym.Env):
         pose_msg.position.z = 0.0
 
         # Random initial yaw for better generalization
-        # yaw = np.random.uniform(-math.pi, math.pi)
-        yaw = -math.pi / 2
+        yaw = np.random.uniform(-math.pi, math.pi)
+        self.last_reset_yaw = float(yaw)
         pose_msg.orientation.w = math.cos(yaw / 2.0)
         pose_msg.orientation.x = 0.0
         pose_msg.orientation.y = 0.0
@@ -457,24 +565,37 @@ class TurtleBotNavEnv(gym.Env):
         except Exception as e:
             self._print_and_log(f"Service call failed: {e}")
             self._print_and_log("Continuing with Gazebo model state tracking...")
-
-        time.sleep(0.5)
+        # time.sleep(0.5)
 
     def _wait_for_model_state(self):
         """Wait for initial model state from Gazebo topic."""
         self.model_state_received = False
+        initial_seq = self.model_state_seq
         
+        # self._print_and_log("Waiting for initial model state from Gazebo topic...")
+
         start_time = time.time()
         timeout = 5.0  # seconds
 
-        while not self.model_state_received and (time.time() - start_time) < timeout:
-            time.sleep(0.1)
+        while (self.model_state_seq == initial_seq) and (time.time() - start_time) < timeout:
+            # Allow Gazebo transport to process messages
+            time.sleep(0.01)
             
-        if not self.model_state_received:
-            raise RuntimeError("Model state reception timed out.")
+        if self.model_state_seq == initial_seq:
+            self._print_and_log("Warning: Model state reception timed out. Using fallback pose for reset.")
+            if self.current_position is None:
+                self.current_position = self.start_position.copy()
+            if not np.isfinite(self.current_yaw):
+                self.current_yaw = 0.0
+            # If we just requested a reset with random yaw, use that as a reasonable fallback
+            self.current_yaw = float(getattr(self, 'last_reset_yaw', 0.0))
 
     def _print_and_log(self, message):
         self.node.get_logger().info(message)
+
+    # ============================================================
+    # === Gazebo Visualization Helper Methods ===
+    # ============================================================
 
     def _update_marker_visuals(self):
         """Spawns or moves visual markers for start and goal in Gazebo."""
@@ -486,11 +607,13 @@ class TurtleBotNavEnv(gym.Env):
             self._spawn_marker(self.goal_marker_name, self.goal_position, color="1 0 0 1")   
             self.markers_initialized = True
         else:
+            # Subsequent runs: Move models (faster than respawning)
             self._move_marker(self.start_marker_name, self.start_position)
             self._move_marker(self.goal_marker_name, self.goal_position)
 
     def _spawn_marker(self, name, position, color="1 0 0 1"):
         """Spawns a static visual-only cylinder using EntityFactory."""
+        # SDF for a flat cylinder (marker), static, no collision
         sdf_string = f"""
         <?xml version="1.0" ?>
         <sdf version="1.6">
