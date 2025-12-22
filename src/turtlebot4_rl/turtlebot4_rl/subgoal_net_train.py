@@ -49,7 +49,7 @@ if os.path.exists(file_path):
     df = pd.read_csv(file_path)
     df.dropna(inplace=True)
 
-    X_num = df.drop(columns=target_cols + ['yaw']).values.astype(np.float32)
+    X_num = df.drop(columns=target_cols).values.astype(np.float32)
     Y = df[target_cols].values.astype(np.float32)
 else:
     print("Warning: File not found, generating simulation data...")

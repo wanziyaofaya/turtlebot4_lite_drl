@@ -41,7 +41,7 @@ def generate_subgoal_dataset(env, model_dir, num_samples=100000, output_file='im
         if not file_exists:
             # 如果文件不存在，写入表头
             lidar_headers = ",".join([f"lidar_{k}" for k in range(64)])
-            f.write(f'start_x,start_y,goal_x,goal_y,subgoal_x,subgoal_y,yaw,{lidar_headers}\n')
+            f.write(f'start_x,start_y,goal_x,goal_y,subgoal_x,subgoal_y,{lidar_headers}\n')
         
         for i in range(num_samples):
             start, goal = generate_random_positions(map_bounds, min_distance)
@@ -58,9 +58,8 @@ def generate_subgoal_dataset(env, model_dir, num_samples=100000, output_file='im
                 continue
             subgoal = path[1]
             lidar_str = ','.join([f"{v:.4f}" for v in lidar])
-            current_yaw = env.current_yaw
-            f.write(f"{start[0]:.4f},{start[1]:.4f},{goal[0]:.4f},{goal[1]:.4f},{subgoal[0]:.4f},{subgoal[1]:.4f},{current_yaw:.4f},{lidar_str}\n")
-            print(f"Sample {i+1}: start={start}, goal={goal}, subgoal={subgoal}, yaw={current_yaw}")
+            f.write(f"{start[0]:.4f},{start[1]:.4f},{goal[0]:.4f},{goal[1]:.4f},{subgoal[0]:.4f},{subgoal[1]:.4f},{lidar_str}\n")
+            print(f"Sample {i+1}: start={start}, goal={goal}, subgoal={subgoal}")
     print(f"Subgoal dataset generated: {dataset_path}")
 
 
@@ -72,7 +71,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="生成TurtleBot子目标点数据集")
     parser.add_argument('--model_dir', type=str, default='models', help='数据集保存目录')
     parser.add_argument('--num_samples', type=int, default=100000, help='生成样本数量')
-    parser.add_argument('--output_file', type=str, default='improved_astar_subgoal_no_yaw_dataset_64.txt', help='输出文件名')
+    parser.add_argument('--output_file', type=str, default='improved_astar_subgoal_no_yaw_dataset_32.txt', help='输出文件名')
     parser.add_argument('--min_distance', type=float, default=2, help='起点与终点最小距离')
     parser.add_argument('--start_x', type=float, default=0.0, help='起点x坐标')
     parser.add_argument('--start_y', type=float, default=0.0, help='起点y坐标')
