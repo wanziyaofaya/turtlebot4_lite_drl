@@ -91,6 +91,7 @@ class TurtleBotRLNode(Node):
 
         # Initialize environment (will auto-generate random positions on each reset)
         self.env = TurtleBotNavEnv(
+            subgoal_model_path='models/subgoal_dataset.pt',
             map_bounds=self.map_bounds,
             min_distance=self.min_distance
         )
