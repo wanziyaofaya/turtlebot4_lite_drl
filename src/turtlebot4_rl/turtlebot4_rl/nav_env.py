@@ -98,6 +98,7 @@ class TurtleBotNavEnv(gym.Env):
 
         # State - will be properly initialized by reset()
         self.lidar_data = None
+        self.raw_lidar_data = None
         self.lidar_seq = 0
         self.min_lidar = None
         self.current_position = None
@@ -147,6 +148,7 @@ class TurtleBotNavEnv(gym.Env):
 
         # Vectorized min-pooling into 32 beams
         processed = raw_data.reshape(32, 20).min(axis=1)
+        self.raw_lidar_data = raw_data
         self.lidar_data = processed  # np.ndarray(float32), avoids per-step list->array conversion
         self.min_lidar = float(processed.min())
         self.lidar_seq += 1

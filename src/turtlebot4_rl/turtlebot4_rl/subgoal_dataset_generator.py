@@ -39,7 +39,7 @@ def generate_subgoal_dataset(env, model_dir, num_samples=500000, output_file='su
 
     with open(dataset_path, 'a') as f:  # 使用追加模式
         if not file_exists:
-            # 如果文件不存在，写入表头
+            # 写入64维雷达信息的表头
             lidar_headers = ",".join([f"lidar_{k}" for k in range(64)])
             f.write(f'start_x,start_y,goal_x,goal_y,subgoal_x,subgoal_y,{lidar_headers}\n')
         
@@ -47,11 +47,16 @@ def generate_subgoal_dataset(env, model_dir, num_samples=500000, output_file='su
             start, goal = generate_random_positions(map_bounds, min_distance)
             env.start_position = start
             env.goal_position = goal
-            obs, _ = env.reset()
-            # 提取64维激光信息
-            lidar = obs[:64]
-            if getattr(env, 'lidar_data', None) is None:
-                env.lidar_data = lidar
+            env.reset()
+            # 获取原始雷达信息并处理为64维 (640 -> 64, 每10个取最小值)
+            raw_lidar = env.raw_lidar_data
+            if raw_lidar is None:
+                print(f"[WARN] Raw LiDAR data is None for start={start}, goal={goal}")
+                continue
+            
+            # 处理为64维：将640个点重塑为(64, 10)并取每组的最小值
+            lidar = raw_lidar.reshape(64, 10).min(axis=1)
+            
             path = astar(start, goal, resolution=0.01, env=env)
             if path is None or len(path) < 2:
                 print(f"[WARN] Astar failed or path too short for start={start}, goal={goal}")
