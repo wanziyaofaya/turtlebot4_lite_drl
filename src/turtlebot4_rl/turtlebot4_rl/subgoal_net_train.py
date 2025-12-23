@@ -152,8 +152,8 @@ model = tabm.TabM.make(
     d_out=n_outputs,
     num_embeddings=num_embeddings,
     # widen/deepen backbone for better capacity
-    n_blocks=3,
-    d_block=640,
+    n_blocks=3, # 模型中残差块（Residual Blocks）的数量
+    d_block=640, # 每个块中隐藏层的维度（即神经元的数量）
     dropout=0.1,
     k=8,
 ).to(device)
@@ -241,7 +241,7 @@ def make_checkpoint() -> dict[str, Any]:
     })
 
 best_checkpoint = make_checkpoint()
-patience = 30
+patience = 40
 remaining_patience = patience
 
 print("\nStarting Training...")
