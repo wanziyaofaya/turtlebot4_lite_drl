@@ -41,7 +41,7 @@ TaskType = Literal['regression', 'binclass', 'multiclass']
 task_type: TaskType = 'regression'
 n_classes = None
 
-file_path = 'models/subgoal_dataset.txt'
+file_path = 'models/subgoal_dataset_64.txt'
 target_cols = ['subgoal_x', 'subgoal_y']
 
 if os.path.exists(file_path):
@@ -210,7 +210,7 @@ def evaluate(part: str) -> dict:
 
 print(f'Test score before training: {evaluate("test")["score"]:.4f}')
 
-n_epochs = 400
+n_epochs = 500
 train_size = len(train_idx)
 batch_size = 512
 
