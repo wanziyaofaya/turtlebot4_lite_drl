@@ -13,56 +13,6 @@ from datetime import datetime
 import torch
 from turtlebot4_rl.custom_callback import SuccessInfoCallback
 
-class EntCoefScheduler(BaseCallback):
-    def __init__(self, start_value: float = 0.015, end_value: float = 0.007, 
-                 step_interval: int = 50000, max_steps: int = 500000):
-        super().__init__(verbose=0)
-        self.start_value = start_value
-        self.end_value = end_value
-        self.step_interval = step_interval  # 每5万步衰减一次
-        self.max_steps = max_steps         # 50万步后停止衰减
-        self.decay_rate = 0.9              # 每次衰减10%
-
-    def _on_step(self) -> bool:
-        # 如果超过最大步数，使用最终值
-        if self.num_timesteps >= self.max_steps:
-            current_ent_coef = self.end_value
-        else:
-            current_stage = min(self.num_timesteps // self.step_interval, 
-                              self.max_steps // self.step_interval)
-            # 计算当前的熵系数：每阶段降低10%
-            current_ent_coef = max(
-                self.end_value,  # 不低于最终值
-                self.start_value * (self.decay_rate ** current_stage)
-            )
-        # 更新模型的熵系数
-        if hasattr(self.model, 'ent_coef'):
-            self.model.ent_coef = current_ent_coef
-        self.logger.record("train/ent_coef", current_ent_coef)
-        return True
-
-class LearningRateScheduler(BaseCallback):
-    def __init__(self, start_lr: float, end_lr: float, decay_start: int, verbose: int = 0):
-        super().__init__(verbose)
-        self.start_lr = start_lr
-        self.end_lr = end_lr
-        self.decay_start = decay_start
-
-    def _on_step(self) -> bool:
-        # 修改学习率变化逻辑
-        if self.num_timesteps < self.decay_start:
-            current_lr = self.start_lr
-        else:
-            current_lr = self.end_lr
-
-        # 更新学习率
-        if hasattr(self.model, 'policy') and hasattr(self.model.policy, 'optimizer'):
-            for param_group in self.model.policy.optimizer.param_groups:
-                param_group['lr'] = current_lr
-
-        # 记录学习率到Tensorboard
-        self.logger.record('train/learning_rate', current_lr)
-        return True
 
 class TurtleBotRLNode(Node):
     """ROS2节点：可训练或仅评估强化学习模型。"""
@@ -131,22 +81,22 @@ class TurtleBotRLNode(Node):
                     tensorboard_log=self.tensorboard_log,
                     learning_rate=1e-4,  
                     n_steps=2048,  
-                    batch_size=128, 
+                    batch_size=256, 
                     n_epochs=10,
-                    gamma=0.99,
+                    gamma=0.95,
                     gae_lambda=0.95,
-                    clip_range=0.2,
+                    clip_range=0.1,
                     clip_range_vf=None,
-                    ent_coef=0.01,
+                    ent_coef=0.05,
                     vf_coef=0.5,
                     max_grad_norm=0.5,
                     policy_kwargs=dict(
-                        net_arch=[dict(pi=[64, 64], vf=[64, 64])],
+                        net_arch=[dict(pi=[256, 256], vf=[256, 256])],
                         activation_fn=torch.nn.ReLU,
                         ortho_init=True,  # 使用正交初始化，提高训练稳定性
                     ),
                     normalize_advantage=True,  # 归一化优势函数，提高训练稳定性
-                    target_kl=0.01,  # 限制策略更新幅度，提高稳定性
+                    target_kl=0.005,  # 限制策略更新幅度，提高稳定性
                 )
             elif algorithm_name == 'SAC':
                 action_dim = float(np.prod(self.env.action_space.shape)) if hasattr(self.env.action_space, "shape") else 1.0
@@ -217,18 +167,6 @@ class TurtleBotRLNode(Node):
         self.get_logger().info("Environment will auto-generate random start/goal positions on each reset")
 
         callbacks = [SuccessInfoCallback(tensorboard_log_dir=self.tensorboard_log, verbose=1)]
-
-        if self.algorithm == 'PPO':
-            ent_scheduler = EntCoefScheduler(
-                start_value=0.015,
-                end_value=0.007,
-                step_interval=50000,
-                max_steps=500000
-            )
-            # callbacks.append(ent_scheduler)
-        # if self.algorithm == 'SAC':
-        #     lr_scheduler = LearningRateScheduler(start_lr=3e-4, end_lr=3e-5, decay_start=300000)
-        #     callbacks.append(lr_scheduler)
 
         training_session = datetime.now().strftime("%Y%m%d_%H%M%S")
         try:

@@ -154,11 +154,11 @@ model = tabm.TabM.make(
     # widen/deepen backbone for better capacity
     n_blocks=3,
     d_block=640,
-    dropout=0.0,
+    dropout=0.1,
     k=8,
 ).to(device)
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=1e-5)
+optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=5e-5)
 gradient_clipping_norm: Optional[float] = 0.8
 share_training_batches = True
 
