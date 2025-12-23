@@ -544,7 +544,8 @@ class TurtleBotNavEnv(gym.Env):
         pose_msg.position.z = 0.0
 
         # Random initial yaw for better generalization
-        yaw = np.random.uniform(-math.pi, math.pi)
+        # yaw = np.random.uniform(-math.pi, math.pi)
+        yaw = -math.pi / 2
         self.last_reset_yaw = float(yaw)
         pose_msg.orientation.w = math.cos(yaw / 2.0)
         pose_msg.orientation.x = 0.0
