@@ -154,7 +154,7 @@ model = tabm.TabM.make(
     # widen/deepen backbone for better capacity
     n_blocks=3, # 模型中残差块（Residual Blocks）的数量
     d_block=640, # 每个块中隐藏层的维度（即神经元的数量）
-    dropout=0.1,
+    dropout=0.0001,
     k=8,
 ).to(device)
 
