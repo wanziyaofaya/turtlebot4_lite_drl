@@ -170,4 +170,5 @@ runs
 subgoal_dataset.txt
 subgoal_dataset_64.txt
 subgoal_dataset_64_yaw.txt
-positions_6000.json
+positions_600000.json
+positions.json
