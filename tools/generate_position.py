@@ -9,7 +9,7 @@ MAP_BOUNDS = {
     'y_max': 2
 }
 MIN_DISTANCE = 2.0
-NUM_PAIRS = 6000
+NUM_PAIRS = 600000
 DEFAULT_CLEARANCE = 0.4
 
 obstacles = [

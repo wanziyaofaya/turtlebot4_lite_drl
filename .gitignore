@@ -169,3 +169,5 @@ odom_stats.csv
 runs
 subgoal_dataset.txt
 subgoal_dataset_64.txt
+subgoal_dataset_64_yaw.txt
+positions_6000.json

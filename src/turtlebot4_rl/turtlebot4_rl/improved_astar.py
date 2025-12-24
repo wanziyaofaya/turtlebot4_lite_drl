@@ -34,10 +34,14 @@ def astar(start, goal, resolution=0.01, env=None):
         raise ValueError("Environment with valid LiDAR data is required to calculate obstacle density.")
 
     # Calculate obstacle density (p value)
-    lidar_data = env.lidar_data
+    lidar_data = env.raw_data
+    # print(lidar_data)
     obstacle_count = np.sum((lidar_data >= 0) & (lidar_data <= 0.85))
     p = obstacle_count / len(lidar_data)
-    k = 2
+    # print("Obstacle count:", obstacle_count)
+    # print("Total LiDAR points:", len(lidar_data))
+    # print(f"Obstacle density p: {p:.4f}")
+    k = 1
     def heuristic(a, b):
         original_heuristic = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
         heuristic = (1 + k * p) * original_heuristic
@@ -60,28 +64,24 @@ def astar(start, goal, resolution=0.01, env=None):
         (1, 1), (1, -1), (-1, 1), (-1, -1)
     ]
 
-    # 前向与后向队列
-    open_fwd = []
-    open_bwd = []
-    heapq.heappush(open_fwd, (heuristic(start, goal), 0, start_g, None))
-    heapq.heappush(open_bwd, (heuristic(goal, start), 0, goal_g, None))
+    # 单向 A* 队列
+    open_list = []
+    heapq.heappush(open_list, (heuristic(start, goal), 0, start_g, None))
 
-    came_from_fwd = {}
-    came_from_bwd = {}
-    cost_fwd = {start_g: 0}
-    cost_bwd = {goal_g: 0}
+    came_from = {}
+    cost_so_far = {start_g: 0}
 
-    meet_node = None
+    final_node = None
 
-    while open_fwd and open_bwd:
-        # 从前向扩展
-        _, cost, current, parent = heapq.heappop(open_fwd)
-        if current in came_from_fwd:
+    while open_list:
+        _, cost, current, parent = heapq.heappop(open_list)
+
+        if current in came_from:
             continue
-        came_from_fwd[current] = parent
+        came_from[current] = parent
 
-        if current in came_from_bwd:
-            meet_node = current
+        if current == goal_g:
+            final_node = current
             break
 
         for dx, dy in directions:
@@ -89,52 +89,29 @@ def astar(start, goal, resolution=0.01, env=None):
             neighbor_xy = from_grid(neighbor)
             if not is_position_valid(neighbor_xy[0], neighbor_xy[1]):
                 continue
-            new_cost = cost + resolution
-            if neighbor not in cost_fwd or new_cost < cost_fwd[neighbor]:
-                cost_fwd[neighbor] = new_cost
+            step_cost = (dx**2 + dy**2)**0.5 * resolution
+            new_cost = cost + step_cost
+            if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
+                cost_so_far[neighbor] = new_cost
                 priority = new_cost + heuristic(neighbor_xy, goal)
-                heapq.heappush(open_fwd, (priority, new_cost, neighbor, current))
+                heapq.heappush(open_list, (priority, new_cost, neighbor, current))
 
-        # 从后向扩展
-        _, cost, current, parent = heapq.heappop(open_bwd)
-        if current in came_from_bwd:
-            continue
-        came_from_bwd[current] = parent
-
-        if current in came_from_fwd:
-            meet_node = current
-            break
-
-        for dx, dy in directions:
-            neighbor = (current[0] + dx, current[1] + dy)
-            neighbor_xy = from_grid(neighbor)
-            if not is_position_valid(neighbor_xy[0], neighbor_xy[1]):
-                continue
-            new_cost = cost + resolution
-            if neighbor not in cost_bwd or new_cost < cost_bwd[neighbor]:
-                cost_bwd[neighbor] = new_cost
-                priority = new_cost + heuristic(neighbor_xy, start)
-                heapq.heappush(open_bwd, (priority, new_cost, neighbor, current))
-
-    if not meet_node:
+    if not final_node:
         return None
 
     # 回溯路径
-    path_fwd = []
-    node = meet_node
+    path = []
+    node = final_node
     while node:
-        path_fwd.append(node)
-        node = came_from_fwd.get(node, None)
-    path_fwd.reverse()
+        path.append(node)
+        node = came_from.get(node, None)
+    path.reverse()
 
-    path_bwd = []
-    node = came_from_bwd.get(meet_node, None)
-    while node:
-        path_bwd.append(node)
-        node = came_from_bwd.get(node, None)
+    full_path = [from_grid(p) for p in path]
+    # print("Full A* path:", full_path)
 
-    full_path = [from_grid(p) for p in path_fwd + path_bwd]
     new_path = remove_redundant_nodes(full_path)
+    # print("Simplified path after removing redundant nodes:", new_path)
     return new_path
 
 

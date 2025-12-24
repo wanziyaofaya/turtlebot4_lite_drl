@@ -13,12 +13,23 @@ import time
 import math
 import tf_transformations
 import os
+import torch
+import tabm
+import rtdl_num_embeddings
+import sklearn.preprocessing
+from typing import NamedTuple
+
+class RegressionLabelStats(NamedTuple):
+    mean: np.ndarray
+    std: np.ndarray
 
 # Constants
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
+SUBGOAL_REACH_THRESHOLD = 0.1 # 子目标到达阈值（米）
+SUBGOAL_REWARD = 20.0 # 到达子目标的奖励
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=2.0, positions_file=None):
+    def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=2.0, positions_file=None, subgoal_model_path=None):
         super().__init__()
 
         if not rclpy.ok():
@@ -98,7 +109,7 @@ class TurtleBotNavEnv(gym.Env):
 
         # State - will be properly initialized by reset()
         self.lidar_data = None
-        self.raw_lidar_data = None
+        self.raw_data = None
         self.lidar_seq = 0
         self.min_lidar = None
         self.current_position = None
@@ -132,6 +143,19 @@ class TurtleBotNavEnv(gym.Env):
         self.markers_initialized = False
         self.start_marker_name = "start_marker_visual"
         self.goal_marker_name = "goal_marker_visual"
+        self.subgoal_marker_name = "subgoal_marker_visual"
+        self.subgoal_marker_spawned = False
+
+        # Subgoal Model Setup
+        self.subgoal_model = None
+        self.subgoal_preprocessing = None
+        self.subgoal_label_stats = None
+        self.device = torch.device('cpu')
+        self.global_goal_position = None
+        self.lidar_data_64 = None
+        
+        if subgoal_model_path:
+             self._load_subgoal_model(subgoal_model_path)
 
         self._print_and_log(f"TurtleBotNavEnv initialized. Call reset() before first use.")
 
@@ -148,8 +172,13 @@ class TurtleBotNavEnv(gym.Env):
 
         # Vectorized min-pooling into 32 beams
         processed = raw_data.reshape(32, 20).min(axis=1)
-        self.raw_lidar_data = raw_data
+        
+        # Vectorized min-pooling into 64 beams for Subgoal Model
+        processed_64 = raw_data.reshape(64, 10).min(axis=1)
+
+        self.raw_data = raw_data
         self.lidar_data = processed  # np.ndarray(float32), avoids per-step list->array conversion
+        self.lidar_data_64 = processed_64
         self.min_lidar = float(processed.min())
         self.lidar_seq += 1
 
@@ -292,9 +321,38 @@ class TurtleBotNavEnv(gym.Env):
         self.prev_angular_vel = 0.0
         self.last_action = np.array([0.0, 0.0], dtype=np.float32)
 
-        # Wait for initial observations
-        if not self._wait_for_new_state():
-            raise RuntimeError("No LiDAR data received after reset timeout.")
+        # Wait for initial observations (wait for 10 frames to ensure stability, matching dataset generator)
+        for _ in range(10):
+            if not self._wait_for_new_state():
+                raise RuntimeError("No LiDAR data received after reset timeout.")
+
+        # --- Subgoal Logic Start ---
+        if self.subgoal_model is not None:
+            # 检查 Yaw 是否接近 -90 度 (-pi/2)
+            if abs(self.current_yaw - (-math.pi / 2)) > 0.1:
+                self._print_and_log(f"Warning: Robot Yaw ({self.current_yaw:.2f}) is not -90 deg. Subgoal prediction may be inaccurate.")
+
+            self.global_goal_position = self.goal_position.copy()
+            subgoal = self._predict_subgoal()
+            if subgoal is not None:
+                self.goal_position = subgoal
+                self._print_and_log(f"Initial Subgoal: {self.goal_position}")
+                if self.subgoal_marker_spawned:
+                    self._move_marker(self.subgoal_marker_name, self.goal_position)
+                else:
+                    self._spawn_marker(self.subgoal_marker_name, self.goal_position, color="0 0 1 1")
+                    self.subgoal_marker_spawned = True
+            else:
+                self._print_and_log("Subgoal prediction failed, using global goal.")
+                self.goal_position = self.global_goal_position
+        
+        # Recalculate metrics with potentially new goal
+        self.prev_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+        goal_vector = self.goal_position - self.current_position
+        angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
+        self.prev_angle_to_goal = angle_to_goal_global - self.current_yaw
+        self.prev_angle_to_goal = (self.prev_angle_to_goal + np.pi) % (2 * np.pi) - np.pi
+        # --- Subgoal Logic End ---
 
         return self._get_state(), {}
 
@@ -339,6 +397,51 @@ class TurtleBotNavEnv(gym.Env):
         # Get current state
         done, collision, min_lidar = self._is_collision()
         target = distance_to_goal < GOAL_REACH_THRESHOLD
+        
+        subgoal_reached = False
+        if self.subgoal_model is not None and target:
+            dist_to_global = np.linalg.norm(self.global_goal_position - self.current_position)
+            if dist_to_global < GOAL_REACH_THRESHOLD:
+                # Reached global goal
+                pass
+            else:
+                # Reached subgoal
+                subgoal_reached = True
+                target = False # Continue episode
+                
+                # Predict next subgoal
+                # FIXME: 模型仅在 Yaw=-90 (朝南) 时训练，无法在任意角度下预测。
+                # 因此在 step() 中禁用预测，仅在 reset() 时预测一次。
+                subgoal = None # self._predict_subgoal()
+                if subgoal is not None:
+                    self.goal_position = subgoal
+                    if self.subgoal_marker_spawned:
+                        self._move_marker(self.subgoal_marker_name, self.goal_position)
+                    else:
+                        self._spawn_marker(self.subgoal_marker_name, self.goal_position, color="0 0 1 1")
+                        self.subgoal_marker_spawned = True
+                    self._print_and_log(f"Reached subgoal. Next: {self.goal_position}")
+                else:
+                    self.goal_position = self.global_goal_position
+                    if self.subgoal_marker_spawned:
+                        self._move_marker(self.subgoal_marker_name, self.goal_position)
+                    else:
+                        self._spawn_marker(self.subgoal_marker_name, self.goal_position, color="0 1 0 1")
+                        self.subgoal_marker_spawned = True
+                    self._print_and_log("Subgoal finished. Switching to global goal.")
+                
+                # Update metrics for new goal
+                self.prev_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+                goal_vector = self.goal_position - self.current_position
+                angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
+                self.prev_angle_to_goal = angle_to_goal_global - self.current_yaw
+                self.prev_angle_to_goal = (self.prev_angle_to_goal + np.pi) % (2 * np.pi) - np.pi
+                
+                # Update cached metrics
+                distance_to_goal, angle_to_goal = self._compute_goal_metrics()
+                self._cached_distance_to_goal = distance_to_goal
+                self._cached_angle_to_goal = angle_to_goal
+
         if target:
             done = True
             self._print_and_log("Goal reached!")
@@ -352,6 +455,7 @@ class TurtleBotNavEnv(gym.Env):
             model_updated,
             distance_to_goal=distance_to_goal,
             angle_to_goal=angle_to_goal,
+            subgoal_reached=subgoal_reached
         )
         info = {'is_success': False, 'is_collision': False}
         if target:
@@ -460,11 +564,15 @@ class TurtleBotNavEnv(gym.Env):
         angle_to_goal = (angle_to_goal + np.pi) % (2 * np.pi) - np.pi
         return distance_to_goal, float(angle_to_goal)
 
-    def _calculate_reward(self, target, collision, model_updated, distance_to_goal=None, angle_to_goal=None):
+    def _calculate_reward(self, target, collision, model_updated, distance_to_goal=None, angle_to_goal=None, subgoal_reached=False):
         if target:
             target_reward = 100.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
+        elif subgoal_reached:
+            subgoal_reward = SUBGOAL_REWARD
+            self._print_and_log(f"🚩 REWARD: Subgoal reached! reward={subgoal_reward:.3f}")
+            return subgoal_reward
         elif collision:
             collision_reward = -100.0
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
@@ -595,6 +703,100 @@ class TurtleBotNavEnv(gym.Env):
 
     def _print_and_log(self, message):
         self.node.get_logger().info(message)
+
+    def _load_subgoal_model(self, model_path):
+        if not os.path.exists(model_path):
+            self._print_and_log(f"Subgoal model not found at {model_path}")
+            return
+
+        try:
+            self._print_and_log(f"Loading subgoal model from {model_path}")
+            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+            
+            model_params = checkpoint['model_params']
+            self.subgoal_preprocessing = checkpoint['preprocessing']
+            self.subgoal_label_stats = checkpoint['regression_label_stats']
+            
+            n_num_features = model_params['n_num_features']
+            n_outputs = model_params['n_outputs']
+            cat_cardinalities = model_params['cat_cardinalities']
+            bins = model_params.get('bins')
+            
+            if bins is None:
+                self._print_and_log("Warning: No bins found in checkpoint, using dummy bins.")
+                # Create dummy bins for initialization (will be overwritten by load_state_dict)
+                bins = [torch.tensor(np.linspace(0, 1, 129), dtype=torch.float32) for _ in range(n_num_features)]
+            
+            num_embeddings = rtdl_num_embeddings.PiecewiseLinearEmbeddings(
+                bins=bins,
+                d_embedding=16,
+                activation=False,
+                version='B',
+            )
+            
+            self.subgoal_model = tabm.TabM.make(
+                n_num_features=n_num_features,
+                cat_cardinalities=cat_cardinalities,
+                d_out=n_outputs,
+                num_embeddings=num_embeddings,
+                n_blocks=3,
+                d_block=640,
+                dropout=0.0,
+                k=8,
+            ).to(self.device)
+            
+            self.subgoal_model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            self.subgoal_model.eval()
+            self._print_and_log("Subgoal model loaded successfully.")
+            
+        except Exception as e:
+            self._print_and_log(f"Failed to load subgoal model: {e}")
+            self.subgoal_model = None
+
+    def _predict_subgoal(self):
+        if self.subgoal_model is None:
+            return None
+            
+        if self.lidar_data_64 is None:
+            self._print_and_log("No 64-beam LiDAR data available for prediction.")
+            return None
+
+        try:
+            current_x, current_y = self.current_position
+            goal_x, goal_y = self.global_goal_position
+            
+            # Lidar data (64 beams)
+            lidar = self.lidar_data_64
+            # Concatenate: [start_x, start_y, goal_x, goal_y, lidar...]
+            input_features = np.concatenate([
+                np.array([current_x, current_y, goal_x, goal_y], dtype=np.float32),
+                lidar
+            ])
+            
+            input_features = input_features.reshape(1, -1)
+            input_features = self.subgoal_preprocessing.transform(input_features)
+            input_features = np.nan_to_num(input_features, nan=0.0)
+            
+            input_tensor = torch.as_tensor(input_features, device=self.device).float()
+            
+            with torch.no_grad():
+                output = self.subgoal_model(input_tensor, None)
+                # Mean over ensemble dimension (dim 1)
+                output = output.mean(dim=1) 
+                prediction = output.cpu().numpy()[0]
+                
+            if self.subgoal_label_stats:
+                mean = self.subgoal_label_stats.mean
+                std = self.subgoal_label_stats.std
+                prediction = prediction * std + mean
+            
+            self._print_and_log(f"🤖 Neural Network Predicted Subgoal: x={prediction[0]:.4f}, y={prediction[1]:.4f}")
+                
+            return prediction.astype(np.float32)
+            
+        except Exception as e:
+            self._print_and_log(f"Error during subgoal prediction: {e}")
+            return None
 
     # ============================================================
     # === Gazebo Visualization Helper Methods ===

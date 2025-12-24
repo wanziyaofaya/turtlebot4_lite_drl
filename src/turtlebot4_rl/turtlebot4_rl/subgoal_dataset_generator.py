@@ -1,32 +1,5 @@
-
 import os
-import numpy as np
-import random
-from turtlebot4_rl.collision import is_spawn_position_valid
-from datetime import datetime
-
-def generate_random_positions(map_bounds, min_distance=2):
-    """生成不在障碍物内且距离足够的随机起点和终点"""
-    max_attempts = 3000
-    for _ in range(max_attempts):
-        start_x = round(random.uniform(map_bounds['x_min'], map_bounds['x_max']), 2)
-        start_y = round(random.uniform(map_bounds['y_min'], map_bounds['y_max']), 2)
-        if not is_spawn_position_valid(start_x, start_y, bounds=map_bounds):
-            continue
-        goal_x = round(random.uniform(map_bounds['x_min'], map_bounds['x_max']), 2)
-        goal_y = round(random.uniform(map_bounds['y_min'], map_bounds['y_max']), 2)
-        if not is_spawn_position_valid(goal_x, goal_y, bounds=map_bounds):
-            continue
-        distance = np.sqrt((goal_x - start_x)**2 + (goal_y - start_y)**2)
-        if distance >= min_distance:
-            start_pos = np.array([start_x, start_y], dtype=np.float32)
-            goal_pos = np.array([goal_x, goal_y], dtype=np.float32)
-            return start_pos, goal_pos
-    print("[WARN] Could not generate valid random positions, using fallback positions")
-    return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
-
-
-def generate_subgoal_dataset(env, model_dir, num_samples=500000, output_file='subgoal_dataset_64.txt', min_distance=2):
+def generate_subgoal_dataset(env, model_dir, num_samples=500000, output_file='subgoal_dataset.txt', min_distance=2):
     """
     生成子目标点数据集，每条数据包括：起点、终点、子目标点、激光信息。
     """
@@ -42,22 +15,23 @@ def generate_subgoal_dataset(env, model_dir, num_samples=500000, output_file='su
             # 写入64维雷达信息的表头
             lidar_headers = ",".join([f"lidar_{k}" for k in range(64)])
             f.write(f'start_x,start_y,goal_x,goal_y,subgoal_x,subgoal_y,{lidar_headers}\n')
+            # f.write(f'start_x,start_y,goal_x,goal_y,yaw,subgoal_x,subgoal_y,{lidar_headers}\n')
         
         for i in range(num_samples):
-            start, goal = generate_random_positions(map_bounds, min_distance)
-            env.start_position = start
-            env.goal_position = goal
             env.reset()
-            # 获取原始雷达信息并处理为64维 (640 -> 64, 每10个取最小值)
-            raw_lidar = env.raw_lidar_data
-            if raw_lidar is None:
-                print(f"[WARN] Raw LiDAR data is None for start={start}, goal={goal}")
+
+            # 使用实际位置和姿态，而不是请求的复位位置
+            start = env.current_position if env.current_position is not None else env.start_position
+            goal = env.goal_position
+            
+            # 直接使用环境类中已经处理好的 64 维雷达数据
+            lidar = env.lidar_data_64
+            if lidar is None:
+                print(f"[WARN] LiDAR data is None for start={start}, goal={goal}")
                 continue
             
-            # 处理为64维：将640个点重塑为(64, 10)并取每组的最小值
-            lidar = raw_lidar.reshape(64, 10).min(axis=1)
-            
             path = astar(start, goal, resolution=0.01, env=env)
+            # print(f"Astar path from {start} to {goal}: {path}")
             if path is None or len(path) < 2:
                 print(f"[WARN] Astar failed or path too short for start={start}, goal={goal}")
                 continue
@@ -76,7 +50,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="生成TurtleBot子目标点数据集")
     parser.add_argument('--model_dir', type=str, default='models', help='数据集保存目录')
     parser.add_argument('--num_samples', type=int, default=500000, help='生成样本数量')
-    parser.add_argument('--output_file', type=str, default='subgoal_dataset_64.txt', help='输出文件名')
+    parser.add_argument('--output_file', type=str, default='subgoal_dataset.txt', help='输出文件名')
     parser.add_argument('--min_distance', type=float, default=2, help='起点与终点最小距离')
     parser.add_argument('--start_x', type=float, default=0.0, help='起点x坐标')
     parser.add_argument('--start_y', type=float, default=0.0, help='起点y坐标')

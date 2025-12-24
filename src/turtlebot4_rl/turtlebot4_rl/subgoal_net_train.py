@@ -49,6 +49,9 @@ if os.path.exists(file_path):
     df = pd.read_csv(file_path)
     df.dropna(inplace=True)
 
+    # feature_cols = df.drop(columns=target_cols).columns.tolist()
+    # print(f"Training with {len(feature_cols)} features: {feature_cols[:5]} ...")
+
     X_num = df.drop(columns=target_cols).values.astype(np.float32)
     Y = df[target_cols].values.astype(np.float32)
 else:
@@ -139,8 +142,9 @@ grad_scaler = torch.cuda.amp.GradScaler() if amp_dtype is torch.float16 else Non
 print(f'Device:        {device.type.upper()}')
 print(f'AMP:           {amp_enabled}{f" ({amp_dtype})"if amp_enabled else ""}')
 
+bins = rtdl_num_embeddings.compute_bins(data['train']['x_num'], n_bins=128)
 num_embeddings = rtdl_num_embeddings.PiecewiseLinearEmbeddings(
-    rtdl_num_embeddings.compute_bins(data['train']['x_num'], n_bins=128), # 将每个特征划分为128个区间
+    bins, # 将每个特征划分为128个区间
     d_embedding=16, # 每个特征映射到16维空间
     activation=False,
     version='B',
@@ -154,7 +158,7 @@ model = tabm.TabM.make(
     # widen/deepen backbone for better capacity
     n_blocks=3, # 模型中残差块（Residual Blocks）的数量
     d_block=640, # 每个块中隐藏层的维度（即神经元的数量）
-    dropout=0.0001,
+    dropout=0.0,
     k=8,
 ).to(device)
 
@@ -210,7 +214,7 @@ def evaluate(part: str) -> dict:
 
 print(f'Test score before training: {evaluate("test")["score"]:.4f}')
 
-n_epochs = 500
+n_epochs = 180
 train_size = len(train_idx)
 batch_size = 512
 
@@ -297,11 +301,14 @@ for epoch in range(n_epochs):
         writer.add_scalar('train/loss', avg_train_loss, epoch)
     writer.add_scalar('val/mse', eval_val['mse'], epoch)
     writer.add_scalar('val/r2', eval_val['r2'], epoch)
+    writer.add_scalar('val/rmse', -eval_val['score'], epoch)
     writer.add_scalar('test/mse', eval_test['mse'], epoch)
     writer.add_scalar('test/r2', eval_test['r2'], epoch)
+    writer.add_scalar('test/rmse', -eval_test['score'], epoch)
     # 记录训练集的 MSE 和 R²
     writer.add_scalar('train/mse', eval_train['mse'], epoch)
     writer.add_scalar('train/r2', eval_train['r2'], epoch)
+    writer.add_scalar('train/rmse', -eval_train['score'], epoch)
     # log learning rate (first param group)
     try:
         lr = optimizer.param_groups[0]['lr']
@@ -350,6 +357,7 @@ torch.save(
             'n_num_features': n_num_features,
             'n_outputs': n_outputs,
             'cat_cardinalities': cat_cardinalities,
+            'bins': bins,
         },
     },
     model_save_path,

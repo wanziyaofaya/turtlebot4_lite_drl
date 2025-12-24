@@ -12,6 +12,11 @@ import os
 from datetime import datetime
 import torch
 from turtlebot4_rl.custom_callback import SuccessInfoCallback
+from typing import NamedTuple
+
+class RegressionLabelStats(NamedTuple):
+    mean: np.ndarray
+    std: np.ndarray
 
 
 class TurtleBotRLNode(Node):
@@ -41,8 +46,8 @@ class TurtleBotRLNode(Node):
 
         # Initialize environment (will auto-generate random positions on each reset)
         self.env = TurtleBotNavEnv(
-            subgoal_model_path='models/subgoal_dataset.pt',
-            map_bounds=self.map_bounds,
+            subgoal_model_path='models/subgoal_tabm_20251224_194959.pt',
+            map_bounds=self.map_bounds, 
             min_distance=self.min_distance
         )
 
