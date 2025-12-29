@@ -168,7 +168,9 @@ tensorboard_logs
 odom_stats.csv
 runs
 subgoal_dataset.txt
-subgoal_dataset_64.txt
-subgoal_dataset_64_yaw.txt
-positions_600000.json
+subgoal_dataset_0.2.txt
+subgoal_dataset_0.35.txt
+positions_6000.json
 positions.json
+SAC_20251228_170730_FINAL_10000000steps.zip
+subgoal_tabm_20251228_151036.pt

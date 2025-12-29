@@ -35,6 +35,7 @@ class TurtleBotRLNode(Node):
 
         # Map boundaries (based on the warehouse map)
         self.map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
+        # self.map_bounds = {'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3}
 
         self.model_dir = os.path.join('models', self.algorithm)
         os.makedirs(self.model_dir, exist_ok=True)
@@ -45,8 +46,14 @@ class TurtleBotRLNode(Node):
         os.makedirs(self.tensorboard_log, exist_ok=True)
 
         # Initialize environment (will auto-generate random positions on each reset)
+        # 设为 None 禁用子目标点预测，直接端到端训练
+        # 如需启用子目标: '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20251226_104129.pt'
+        subgoal_model_path = '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20251228_151036.pt'
+        # subgoal_model_path = None
+        self.get_logger().info(f"Subgoal model path: {subgoal_model_path}")
+        
         self.env = TurtleBotNavEnv(
-            subgoal_model_path='models/subgoal_tabm_20251224_194959.pt',
+            subgoal_model_path=subgoal_model_path,
             map_bounds=self.map_bounds, 
             min_distance=self.min_distance
         )

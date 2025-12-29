@@ -17,6 +17,9 @@ def is_obstacle_free(start, end, step_size=0.01):
 def remove_redundant_nodes(path):
             if len(path) < 2:
                 return path
+            # 先检查起点能否直接连接终点
+            if is_obstacle_free(path[0], path[-1]):
+                return [path[0], path[-1]]
             simplified_path = [path[0]]  # 保留起点
             for i in range(1, len(path) - 1):
                 start = simplified_path[-1]
@@ -44,7 +47,7 @@ def astar(start, goal, resolution=0.01, env=None):
     k = 1
     def heuristic(a, b):
         original_heuristic = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
-        heuristic = (1 + k * p) * original_heuristic
+        heuristic = original_heuristic
         return heuristic
 
     def to_grid(p):

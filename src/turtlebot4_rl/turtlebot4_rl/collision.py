@@ -24,7 +24,7 @@ obstacles = [
     # (0.8 - 0.1 / 2, 0.8 - 0.1 / 2, 0.1, 0.1),
     # (1.35 - 0.3 / 2, -0.45 - 0.1 / 2, 0.3, 0.1),
     # (-2.25 - 0.5 / 2, 1.35 - 0.3 / 2, 0.5, 0.3),
-    # (-0.9 - 0.6 / 2, 2.25 - 0.2 / 2, 0.6, 0.2)
+    # (-0.9 - 0.4 / 2, 2.25 - 0.2 / 2, 0.4, 0.2)
 ]
 
 def point_in_obstacle(x, y):
@@ -60,7 +60,7 @@ def is_spawn_position_valid(x, y, bounds=None, clearance=DEFAULT_CLEARANCE):
         expanded_bottom = oy - clearance
         expanded_top = oy + h + clearance
 
-        if expanded_left <= x <= expanded_right and expanded_bottom <= y <= expanded_top:
+        if expanded_left < x < expanded_right and expanded_bottom < y < expanded_top:
             nearest_x = min(max(x, ox), ox + w)
             nearest_y = min(max(y, oy), oy + h)
             dx = x - nearest_x
@@ -70,7 +70,7 @@ def is_spawn_position_valid(x, y, bounds=None, clearance=DEFAULT_CLEARANCE):
 
     return True
 
-CLEARANCE = 0.4
+CLEARANCE = 0.20
 def is_position_valid(x, y, bounds=None, clearance=CLEARANCE):
     if bounds:
         if not (bounds['x_min'] + clearance <= x <= bounds['x_max'] - clearance and
@@ -86,7 +86,7 @@ def is_position_valid(x, y, bounds=None, clearance=CLEARANCE):
         expanded_bottom = oy - clearance
         expanded_top = oy + h + clearance
 
-        if expanded_left <= x <= expanded_right and expanded_bottom <= y <= expanded_top:
+        if expanded_left < x < expanded_right and expanded_bottom < y < expanded_top:
             nearest_x = min(max(x, ox), ox + w)
             nearest_y = min(max(y, oy), oy + h)
             dx = x - nearest_x

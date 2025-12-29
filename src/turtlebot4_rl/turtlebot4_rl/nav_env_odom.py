@@ -5,44 +5,75 @@ from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Pose
-from gz.transport14 import Node
-from gz.msgs11.pose_pb2 import Pose
+from gz.transport14 import Node as GzNode
+from gz.msgs11.pose_pb2 import Pose as GzPose
 from gz.msgs11.boolean_pb2 import Boolean
+from gz.msgs11.entity_factory_pb2 import EntityFactory
 import time
 import math
 import tf_transformations
+import os
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.3  # 目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
+
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, start_position, goal_position, max_wait_for_observation=50.0):
+    """Navigation environment using odometry for pose and LiDAR for perception."""
+
+    def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=2.0, positions_file=None):
         super().__init__()
 
         if not rclpy.ok():
             rclpy.init(args=None)
 
-        self.node = rclpy.create_node('turtlebot_nav_env')
+        self.node = rclpy.create_node('turtlebot_nav_env_odom')
 
-        # Velocity limits (use constants so clipping is consistent)
+        # 地图边界与起终点配置
+        self.map_bounds = map_bounds if map_bounds is not None else {
+            'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2
+        }
+        self.min_distance = min_distance
+
+        # 预定义起终点文件
+        self.positions = None
+        self.position_index = 0
+        if positions_file is None:
+            if os.path.exists('positions_6000.json'):
+                positions_file = os.path.abspath('positions_6000.json')
+            else:
+                positions_file = '/home/wanzi/turtlebot4_lite_drl/positions_6000.json'
+        try:
+            import json
+            with open(positions_file, 'r') as f:
+                self.positions = json.load(f)
+            if not isinstance(self.positions, list) or len(self.positions) == 0:
+                self.positions = None
+                self._print_and_log(f"{positions_file} 加载失败或为空，仍将使用随机起终点！")
+            else:
+                self._print_and_log(f"已从 {positions_file} 加载{len(self.positions)}对起终点，将依次使用。")
+        except Exception as e:
+            self.positions = None
+            self._print_and_log(f"未能加载 {positions_file}: {e}，仍将使用随机起终点！")
+
+        # 速度与范围配置
         self.MAX_LINEAR_VEL = 3.0
-        self.MIN_LINEAR_VEL = -3.0
-        self.MAX_ANGULAR_VEL = 1.5
-        self.MIN_ANGULAR_VEL = -1.5
+        self.MAX_ANGULAR_VEL = 1.9
+        self.LIDAR_MAX_RANGE = 6.0
+        self.MAX_GOAL_DIST = 6.0
 
-        # Define action spaces
+        # 动作空间（归一化到 [-1, 1]）
         self.action_space = gym.spaces.Box(
-            low=np.array([self.MIN_LINEAR_VEL, self.MIN_ANGULAR_VEL], dtype=np.float32),
-            high=np.array([self.MAX_LINEAR_VEL, self.MAX_ANGULAR_VEL], dtype=np.float32),
-            dtype=np.float32
+            low=np.array([-1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0], dtype=np.float32),
+            dtype=np.float32,
         )
 
-        # Continuous observation (LiDAR scans + robot state)
+        # 观测空间：32 维 LiDAR + 6 维机器人状态
         self.observation_space = gym.spaces.Box(
-            low=np.concatenate([np.zeros(640), np.array([0.0, -np.pi, -3.0, -1.5])]),
-            high=np.concatenate([np.full(640, 12.0), np.array([20.0, np.pi, 3.0, 1.5])]),
-            dtype=np.float32
+            low=np.concatenate([np.zeros(32), np.array([0.0, -1.0, -1.0, -1.0, 0.0, -1.0])]),
+            high=np.concatenate([np.ones(32), np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])]),
+            dtype=np.float32,
         )
 
         # Pub/Sub
@@ -50,384 +81,338 @@ class TurtleBotNavEnv(gym.Env):
         self.scan_sub = self.node.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.odom_sub = self.node.create_subscription(Odometry, '/odom', self.odom_callback, 10)
 
-        # State
+        # Gazebo 节点用于重置
+        self.gz_node = GzNode()
+
+        # 状态变量
         self.lidar_data = None
-        self.start_position = np.array(start_position, dtype=np.float32)
-        self.goal_position = np.array(goal_position, dtype=np.float32)
-        self.current_position = np.copy(self.start_position)
+        self.lidar_seq = 0
+        self.min_lidar = None
+        self.odom_seq = 0
+        self.current_position = None
         self.current_yaw = 0.0
-        self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        self.best_distance_to_goal = np.linalg.norm(self.goal_position - self.start_position)
-        self.max_steps_without_improvement = 10000
-        self.distance_degradation_limit = 50
+        self.prev_distance_to_goal = 0.0
+        self.prev_angle_to_goal = 0.0
+        self.prev_linear_vel = 0.0
+        self.prev_angular_vel = 0.0
+        self.last_action = np.array([0.0, 0.0], dtype=np.float32)
         self.done = False
         self.max_wait_for_observation = max_wait_for_observation
 
-        self.previous_position = np.copy(self.start_position)
-        self.stationary_steps = 0
-        self.stationary_threshold = 0.01  # Threshold to consider the robot as stationary
-        self.max_stationary_steps = 100  # Maximum allowed stationary steps before penalty
+        # 起点与终点占位
+        self.start_position = np.array([0.0, 0.0], dtype=np.float32)
+        self.goal_position = np.array([2.0, 2.0], dtype=np.float32)
 
-        # Odometry calibration
-        self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
-        self.odom_calibrated = False
-        self.yaw_offset = 0.0
+        # 缓存的目标指标
+        self._cached_model_seq = None
+        self._cached_distance_to_goal = None
+        self._cached_angle_to_goal = None
 
-        # Previous velocities for robot state
-        self.prev_linear_vel = 0.0
-        self.prev_angular_vel = 0.0
+        # 重置时的随机航向保存
+        self.last_reset_yaw = 0.0
 
-        self._reset_robot_position()
-        self._print_and_log(f"TurtleBotNavEnv initialized ")
+        # 可视化标记
+        self.markers_initialized = False
+        self.start_marker_name = "start_marker_visual"
+        self.goal_marker_name = "goal_marker_visual"
 
+        self._print_and_log("TurtleBotNavEnv (odom) initialized. Call reset() before first use.")
+
+    # ============================================================
+    # 回调
+    # ============================================================
     def scan_callback(self, msg):
-        """Updates state with current scan data."""
-        self.lidar_data = np.array(msg.ranges, dtype=np.float32)
-        # Replace inf values with the maximum LiDAR range (12.0m)
-        self.lidar_data[np.isinf(self.lidar_data)] = 12.0
+        raw_data = np.asarray(msg.ranges, dtype=np.float32)
+        raw_data[np.isinf(raw_data)] = self.LIDAR_MAX_RANGE
+        if raw_data.size < 640:
+            raw_data = np.pad(raw_data, (0, 640 - raw_data.size), constant_values=self.LIDAR_MAX_RANGE)
+        elif raw_data.size > 640:
+            raw_data = raw_data[:640]
+        processed = raw_data.reshape(32, 20).min(axis=1)
+        self.lidar_data = processed
+        self.min_lidar = float(processed.min())
+        self.lidar_seq += 1
 
     def odom_callback(self, msg):
-        odom_x = msg.pose.pose.position.x
-        odom_y = msg.pose.pose.position.y
+        try:
+            pos = msg.pose.pose.position
+            ori = msg.pose.pose.orientation
+            self.current_position = np.array([pos.x, pos.y], dtype=np.float32)
+            _, _, yaw = tf_transformations.euler_from_quaternion([ori.x, ori.y, ori.z, ori.w])
+            self.current_yaw = float(yaw)
+            self.odom_seq += 1
+        except Exception:
+            pass
 
-        odom_q = msg.pose.pose.orientation
-        _, _, odom_yaw = tf_transformations.euler_from_quaternion([
-            odom_q.x, odom_q.y, odom_q.z, odom_q.w
-        ])
-
-        if not self.odom_calibrated:
-            # 记录初始的 odom 姿态
-            self.initial_odom = np.array([odom_x, odom_y], dtype=np.float32)
-            self.initial_odom_yaw = odom_yaw
-
-            # Gazebo 设定的起点和朝向
-            self.start_yaw = -math.pi / 2  # Facing -y
-            self.start_position = np.array(self.start_position, dtype=np.float32)
-
-            # 计算旋转和平移偏移
-            self.yaw_offset = self.start_yaw - odom_yaw
-            self.translation_offset = self.start_position - self._rotate_2d(
-                np.array([odom_x, odom_y], dtype=np.float32),
-                self.yaw_offset
-            )
-
-            self.odom_calibrated = True
-            self.current_position = np.copy(self.start_position)
-            self.current_yaw = self.start_yaw
-            return
-
-        rotated = self._rotate_2d(
-            np.array([odom_x, odom_y], dtype=np.float32),
-            self.yaw_offset
-        )
-        adjusted = rotated + self.translation_offset
-        self.current_position = adjusted
-
-        self.current_yaw = (odom_yaw + self.yaw_offset + math.pi) % (2 * math.pi) - math.pi
-
-    def _rotate_2d(self, point, theta):
-        """Rotate a 2D point by theta (radians)."""
-        c, s = math.cos(theta), math.sin(theta)
-        x, y = point
-        return np.array([c*x - s*y, s*x + c*y], dtype=np.float32)
-
-    def seed(self, seed=0):
-        """Set the random seed for reproducibility."""
-        super().seed(seed)
-        np.random.seed(seed)
-
-    def reset(self, *, seed=None, options=None, start_position=None, goal_position=None):
-        """Reset the environment. Optionally set new start and goal positions."""
-        
-        if start_position is not None:
-            self.start_position = np.array(start_position, dtype=np.float32)
-        if goal_position is not None:
-            self.goal_position = np.array(goal_position, dtype=np.float32)
-
+    # ============================================================
+    # 核心流程
+    # ============================================================
+    def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
+
+        # 生成或加载起终点
+        if self.positions is not None and len(self.positions) > 0:
+            pair = self.positions[self.position_index % len(self.positions)]
+            self.position_index += 1
+            try:
+                self.start_position = np.array(pair['start'], dtype=np.float32)
+                self.goal_position = np.array(pair['goal'], dtype=np.float32)
+            except Exception as e:
+                self._print_and_log(f"positions_6000.json 格式错误，使用随机起终点: {e}")
+                self.start_position, self.goal_position = self._generate_random_positions()
+        else:
+            self.start_position, self.goal_position = self._generate_random_positions()
+
+        self._print_and_log(f"Episode Reset: Start={self.start_position}, Goal={self.goal_position}")
 
         self._send_stop_command()
         self.done = False
 
-        # Reset position in Gazebo
-        self._reset_robot_position()
-        self._calibrate_odom()
-        # Reset state variables
-        self.lidar_data = None
-        self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        self.direction_history = []
-        self.previous_position = np.copy(self.start_position)
+        # 在仿真中标记起点与终点
+        self._update_marker_visuals()
 
-        # Wait for initial observations
-        if not self._wait_for_new_state():
+        # 重置机器人位姿
+        self._reset_robot_position()
+
+        # 等待里程计稳定（刷掉陈旧数据）
+        self._wait_for_odom_updates(num_updates=5)
+
+        # 重置缓存与历史
+        self.lidar_data = None
+        self.min_lidar = None
+        self._cached_model_seq = None
+        self._cached_distance_to_goal = None
+        self._cached_angle_to_goal = None
+
+        if self.current_position is None:
+            self.current_position = self.start_position.copy()
+        if not np.isfinite(self.current_yaw):
+            self.current_yaw = float(getattr(self, 'last_reset_yaw', 0.0))
+
+        # 初始化目标角度与距离历史
+        self.prev_distance_to_goal = float(np.linalg.norm(self.goal_position - self.current_position))
+        goal_vector = self.goal_position - self.current_position
+        angle_to_goal_global = float(np.arctan2(goal_vector[1], goal_vector[0]))
+        self.prev_angle_to_goal = (angle_to_goal_global - self.current_yaw + np.pi) % (2 * np.pi) - np.pi
+
+        self.prev_linear_vel = 0.0
+        self.prev_angular_vel = 0.0
+        self.last_action = np.array([0.0, 0.0], dtype=np.float32)
+
+        # 等待新的 LiDAR 数据
+        if not self._wait_for_new_state(num_updates=5):
             raise RuntimeError("No LiDAR data received after reset timeout.")
 
         return self._get_state(), {}
 
     def step(self, action):
-        """Execute one step in the environment."""
-        # 保存执行动作前的距离作为"上次距离"
-        self.last_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-        
-        # Execute action once
+        # 发送动作
         self._take_action(action)
         self.last_action = action
 
-        # Wait for both odom and LiDAR to update
-        old_position = self.current_position.copy()
-        old_lidar_id = id(self.lidar_data)
-        start_time = time.time()
+        initial_odom_seq = self.odom_seq
+        initial_lidar_seq = self.lidar_seq
+        deadline = time.monotonic() + float(self.max_wait_for_observation)
         odom_updated = False
         lidar_updated = False
-        
-        while (time.time() - start_time < self.max_wait_for_observation):
-            rclpy.spin_once(self.node, timeout_sec=0.05)
-            
-            # Check if odometry has been updated
-            if not odom_updated and not np.allclose(self.current_position, old_position, atol=1e-5):
+
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            rclpy.spin_once(self.node, timeout_sec=min(0.05, max(0.0, remaining)))
+            if not odom_updated and self.odom_seq != initial_odom_seq:
                 odom_updated = True
-            
-            # Check if LiDAR has been updated
-            if not lidar_updated and id(self.lidar_data) != old_lidar_id:
+            if not lidar_updated and self.lidar_seq != initial_lidar_seq:
                 lidar_updated = True
-            
-            # Break if both are updated
             if odom_updated and lidar_updated:
                 break
-        
+
         if not lidar_updated:
             raise RuntimeError("No LiDAR data received.")
         if not odom_updated:
-            self._print_and_log("Warning: Odometry data may not have been updated after action.")
+            self._print_and_log("Warning: Odom may not have updated after action.")
 
-        # Get current state
+        # 缓存目标指标
+        distance_to_goal, angle_to_goal = self._compute_goal_metrics()
+        self._cached_model_seq = self.odom_seq
+        self._cached_distance_to_goal = distance_to_goal
+        self._cached_angle_to_goal = angle_to_goal
+
+        # 终止与奖励
         done, collision, min_lidar = self._is_collision()
-        distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         target = distance_to_goal < GOAL_REACH_THRESHOLD
         if target:
             done = True
             self._print_and_log("Goal reached!")
+        elif not odom_updated:
+            done = True
 
-        reward = self._calculate_reward(target, collision, min_lidar)
-        info = {'is_success': False, 'is_collision': False}
-        if target:
-            info['is_success'] = True
-        elif collision:
-            info['is_collision'] = True
+        reward = self._calculate_reward(
+            target,
+            collision,
+            odom_updated,
+            distance_to_goal=distance_to_goal,
+            angle_to_goal=angle_to_goal,
+        )
+
+        info = {'is_success': bool(target), 'is_collision': bool(collision)}
         return self._get_state(), reward, done, False, info
 
+    # ============================================================
+    # 动作与观测
+    # ============================================================
     def _take_action(self, action):
-        """Send velocity command to the robot."""
         msg = TwistStamped()
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
 
-        # self._print_and_log(f"Action received: {action}")
+        action = np.asarray(action, dtype=np.float32)
+        action = np.clip(action, -1.0, 1.0)
+        norm_linear, norm_angular = action
 
-        linear, angular = action
-        # Clip linear and angular velocities to safety limits (ensure robot never exceeds limits)
-        linear = float(np.clip(linear, self.MIN_LINEAR_VEL, self.MAX_LINEAR_VEL))
-        angular = float(np.clip(angular, self.MIN_ANGULAR_VEL, self.MAX_ANGULAR_VEL))
+        linear = (norm_linear + 1.0) / 2.0 * self.MAX_LINEAR_VEL
+        angular = norm_angular * self.MAX_ANGULAR_VEL
+
         msg.twist.linear.x = float(linear)
         msg.twist.angular.z = float(angular)
 
-        # Store current velocities as previous velocities for next step
         self.prev_linear_vel = msg.twist.linear.x
         self.prev_angular_vel = msg.twist.angular.z
 
         self.cmd_vel_pub.publish(msg)
 
     def _send_stop_command(self):
-        """Send zero velocity to the robot."""
         msg = TwistStamped()
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
         self.cmd_vel_pub.publish(msg)
 
     def _get_state(self):
-        """Return the current state (LiDAR readings + robot state)."""
-        # LiDAR data
         if self.lidar_data is None:
-            # If no state available, return zeros for LiDAR data
-            lidar_data = np.zeros(640, dtype=np.float32)
-        else:
-            lidar_data = self.lidar_data.copy()
-        
-        # Robot state: [distance_to_goal, angle_to_goal, prev_linear_vel, prev_angular_vel]
-        distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
+            raise RuntimeError("LiDAR data is not available.")
+        lidar_array = np.asarray(self.lidar_data, dtype=np.float32)
+        lidar_data = np.clip(lidar_array, 0.0, 1.0)
 
-        # 添加详细调试信息 - 所有坐标均为环境坐标系
-        self._print_and_log(
-            f"🔍 状态: "
-            f"起始=[{self.start_position[0]:.3f}, {self.start_position[1]:.3f}] | "
-            f"目标=[{self.goal_position[0]:.3f}, {self.goal_position[1]:.3f}] | "
-            f"当前=[{self.current_position[0]:.3f}, {self.current_position[1]:.3f}] | "
-            f"距离目标={distance_to_goal:.3f}m | "
-            f"改进={self.last_distance_to_goal - distance_to_goal:+.3f}m | "
-        )
-        
-        # Calculate angle to goal relative to robot's current orientatilobal = np.arctan2(goal_vector[1], goal_vector[0])
-        goal_vector = self.goal_position - self.current_position
-        angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
-        angle_to_goal = angle_to_goal_global - self.current_yaw
-        # Normalize angle to [-pi, pi]
-        angle_to_goal = (angle_to_goal + np.pi) % (2 * np.pi) - np.pi
-        
+        if (
+            getattr(self, '_cached_model_seq', None) == self.odom_seq
+            and self._cached_distance_to_goal is not None
+            and self._cached_angle_to_goal is not None
+        ):
+            distance_to_goal = float(self._cached_distance_to_goal)
+            angle_to_goal = float(self._cached_angle_to_goal)
+        else:
+            distance_to_goal, angle_to_goal = self._compute_goal_metrics()
+
+        distance_change = distance_to_goal - self.prev_distance_to_goal
+        angle_change = angle_to_goal - self.prev_angle_to_goal
+        angle_change = (angle_change + np.pi) % (2 * np.pi) - np.pi
+
+        norm_distance = np.clip(distance_to_goal / self.MAX_GOAL_DIST, 0.0, 1.0)
+        norm_angle = angle_to_goal / np.pi
+        norm_linear_vel = self.prev_linear_vel / self.MAX_LINEAR_VEL
+        norm_angular_vel = self.prev_angular_vel / self.MAX_ANGULAR_VEL
+
         robot_state = np.array([
-            distance_to_goal,
-            angle_to_goal,
-            self.prev_linear_vel,
-            self.prev_angular_vel
+            norm_distance,
+            norm_angle,
+            distance_change,
+            angle_change,
+            norm_linear_vel,
+            norm_angular_vel,
         ], dtype=np.float32)
-        
-        # Combine LiDAR data with robot state
+
+        self.prev_distance_to_goal = distance_to_goal
+        self.prev_angle_to_goal = angle_to_goal
+
         combined_state = np.concatenate([lidar_data, robot_state])
         return combined_state
 
-    def _calculate_reward(self, target, collision, min_laser):
+    # ============================================================
+    # 计算与奖励
+    # ============================================================
+    def _compute_goal_metrics(self):
+        distance_to_goal = float(np.linalg.norm(self.goal_position - self.current_position))
+        goal_vector = self.goal_position - self.current_position
+        angle_to_goal_global = float(np.arctan2(goal_vector[1], goal_vector[0]))
+        angle_to_goal = angle_to_goal_global - float(self.current_yaw)
+        angle_to_goal = (angle_to_goal + np.pi) % (2 * np.pi) - np.pi
+        return distance_to_goal, float(angle_to_goal)
+
+    def _calculate_reward(self, target, collision, odom_updated, distance_to_goal=None, angle_to_goal=None):
         if target:
-            target_reward = 20.0
+            target_reward = 100.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
         elif collision:
-            collision_reward = -10.0
+            collision_reward = -100.0
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
             return collision_reward
+        elif not odom_updated:
+            no_update_penalty = -100.0
+            self._print_and_log(f"⚠️ REWARD: No odom update! reward={no_update_penalty:.3f}")
+            return no_update_penalty
         else:
-            distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
-            distance_improvement = self.last_distance_to_goal - distance_to_goal
-            
-            # 奖励参数 - 调整后的版本
-            alpha = 200.0  # 增加正向奖励，让靠近目标更有吸引力
-            beta = 150.0   # 适度惩罚远离目标的行为
-            step_penalty_coef = 0.06
-            orientation_scale = 0.2   
-
-            # === 距离改进奖励/惩罚 ===
-            distance_reward = 0.0
+            if distance_to_goal is None or angle_to_goal is None:
+                distance_to_goal, angle_to_goal = self._compute_goal_metrics()
+            distance_improvement = self.prev_distance_to_goal - distance_to_goal
+            heading_scale = float(np.clip((np.cos(angle_to_goal) + 1.0) / 2.0, 0.0, 1.0))
             if distance_improvement > 0:
-                distance_reward = alpha * distance_improvement
-                # Update progress time
+                distance_reward = distance_improvement * heading_scale
                 if hasattr(self, 'last_progress_time'):
                     self.last_progress_time = time.time()
             else:
-                distance_reward = beta * distance_improvement  # distance_improvement is negative
-
-            # === 步数惩罚 ===
-            step_penalty = step_penalty_coef
-
-            # === 障碍物距离惩罚 ===
-            obstacle_penalty = max(0, 1 - min_laser * 2.0) * 0.5
-
-            # === 朝向目标角度 ===
-            # desired_yaw = math.atan2(
-            #     self.goal_position[1] - self.current_position[1],
-            #     self.goal_position[0] - self.current_position[0]
-            # )
-            # yaw_diff = self._angle_difference(self.current_yaw, desired_yaw)
-            # orientation_reward = math.cos(yaw_diff) * orientation_scale
-
-            # 改进的速度奖励：更合理的速度激励
-            linear_vel = self.last_action[0] if hasattr(self, 'last_action') else 0.0
-            angular_vel = abs(self.last_action[1]) if hasattr(self, 'last_action') else 0.0
-            velocity_reward = max(0,linear_vel) * 0.3 - abs(angular_vel) * 0.08 # 鼓励前进，适度惩罚旋转
-            
-            # === 计算总奖励 ===
-            total_reward = (distance_reward - step_penalty - obstacle_penalty + velocity_reward)
-
-            # 打印详细的奖励分解
-            # self._print_and_log(
-            #     f"📊 REWARD BREAKDOWN: "
-            #     f"distance={distance_reward:+.3f} | "
-            #     f"step=-{step_penalty:.3f} | "
-            #     f"obstacle=-{obstacle_penalty:.3f} | "
-            #     f"orientation={orientation_reward:.3f} | "
-            #     f"velocity={velocity_reward:+.3f} | "
-            #     f"TOTAL={total_reward:+.2f}"
-            # )
-            
-            # 打印状态信息
-            # self._print_and_log(
-            #     f"📍 STATE INFO: "
-            #     f"dist_to_goal={distance_to_goal:.3f}m | "
-            #     f"improvement={distance_improvement:+.4f}m | "
-            #     f"min_laser={min_laser:.3f}m | "
-            #     f"stationary_steps={self.stationary_steps} | "
-            #     f"yaw_diff={abs(yaw_diff)*180/math.pi:.1f}° | "
-            #     f"vel=[{linear_vel:.2f}, {angular_vel:.2f}]"
-            # )
-
-            # === 更新状态 ===
-            self.previous_position = np.copy(self.current_position)
-            # 注意：last_distance_to_goal 现在在 step() 方法开始时更新
+                distance_reward = distance_improvement
+            step_penalty = 0.5
+            total_reward = 100 * distance_reward - step_penalty
             return total_reward
 
-    def _count_oscillations(self):
-        """
-        Count the number of direction changes in the recent movement history.
-        Oscillation is detected when the movement direction alternates frequently.
-        """
-        oscillations = 0
-        for i in range(1, len(self.direction_history)):
-            if self.direction_history[i] != 0 and self.direction_history[i] != self.direction_history[i-1]:
-                oscillations += 1
-        return oscillations
-     
-    def _update_direction_history(self, movement_direction):
-        """
-        Update the movement direction history with the latest movement.
-        """
-        self.direction_history.append(movement_direction)
-        if len(self.direction_history) > self.max_history:
-            self.direction_history.pop(0)
-
-    def _angle_difference(self, current, target):
-        """
-        Compute the smallest difference between two angles.
-        """
-        diff = target - current
-        while diff > math.pi:
-            diff -= 2 * math.pi
-        while diff < -math.pi:
-            diff += 2 * math.pi
-        return diff
-    
     def _is_collision(self):
-        """Check if a collision has occurred based on LiDAR data."""
         collision_threshold = 0.25
-        min_lidar = np.min(self.lidar_data) if self.lidar_data is not None else float('inf')
+        if self.lidar_data is None:
+            min_lidar = float('inf')
+        elif self.min_lidar is not None:
+            min_lidar = float(self.min_lidar)
+        else:
+            min_lidar = float(np.min(self.lidar_data))
         collision = min_lidar < collision_threshold
         if collision:
             self._print_and_log(f"Collision detected! min_lidar={min_lidar:.4f}")
         return collision, collision, min_lidar
 
-    def _wait_for_new_state(self):
-        """
-        Spin until a new LiDAR scan is received or timeout.
-        Return True if new state is received, False otherwise.
-        """
+    # ============================================================
+    # 等待与重置
+    # ============================================================
+    def _wait_for_new_state(self, num_updates=1):
         start_time = time.time()
-        initial_id = id(self.lidar_data)
-        while (id(self.lidar_data) == initial_id) and (time.time() - start_time < self.max_wait_for_observation):
+        target_seq = self.lidar_seq + num_updates
+        while (self.lidar_seq < target_seq) and (time.time() - start_time < self.max_wait_for_observation):
             rclpy.spin_once(self.node, timeout_sec=0.05)
-        if id(self.lidar_data) == initial_id:
-            self._print_and_log("LiDAR data did not update in time.")
+        if self.lidar_seq < target_seq:
+            self._print_and_log(f"LiDAR data did not update {num_updates} times in time.")
             return False
-        else:
-            return True
+        return True
+
+    def _wait_for_odom_updates(self, num_updates=1):
+        start_time = time.time()
+        target_seq = self.odom_seq + num_updates
+        while (self.odom_seq < target_seq) and (time.time() - start_time) < self.max_wait_for_observation:
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+        if self.odom_seq < target_seq:
+            self._print_and_log(f"Warning: Odom reception timed out (received {self.odom_seq - (target_seq - num_updates)}/{num_updates}). Using fallback pose.")
+            if self.current_position is None:
+                self.current_position = self.start_position.copy()
+            if not np.isfinite(self.current_yaw):
+                self.current_yaw = 0.0
+            self.current_yaw = float(getattr(self, 'last_reset_yaw', 0.0))
 
     def _reset_robot_position(self):
-        """
-        Reset the robot's position and synchronize odometry.
-        """
-        node = Node()
-        pose_msg = Pose()
+        pose_msg = GzPose()
         pose_msg.name = "turtlebot4"
         pose_msg.position.x = float(self.start_position[0])
         pose_msg.position.y = float(self.start_position[1])
         pose_msg.position.z = 0.0
 
-        yaw = -math.pi / 2  # Desired yaw in radians (facing downwards, -y direction in Gazebo)
+        yaw = np.random.uniform(-math.pi, math.pi)
+        self.last_reset_yaw = float(yaw)
         pose_msg.orientation.w = math.cos(yaw / 2.0)
         pose_msg.orientation.x = 0.0
         pose_msg.orientation.y = 0.0
@@ -435,38 +420,112 @@ class TurtleBotNavEnv(gym.Env):
 
         service_name = "/world/maze/set_pose"
         timeout_ms = 1000
-
         try:
-            result, response = node.request(service_name, pose_msg, Pose, Boolean, timeout_ms)
-            if not response.data:
-                raise RuntimeError("Failed to reset the robot position.")
+            result, response = self.gz_node.request(service_name, pose_msg, GzPose, Boolean, timeout_ms)
+            if result and response and response.data:
+                self._print_and_log("Robot position reset successfully")
+            else:
+                self._print_and_log(f"Position reset failed: result={result}, response.data={response.data if response else 'None'}")
+                self._print_and_log("Continuing with odom tracking...")
         except Exception as e:
-            raise RuntimeError(f"Service call failed: {e}")
+            self._print_and_log(f"Service call failed: {e}")
+            self._print_and_log("Continuing with odom tracking...")
 
-        time.sleep(0.5)
+    # ============================================================
+    # 实用工具
+    # ============================================================
+    def _generate_random_positions(self):
+        from turtlebot4_rl.collision import is_spawn_position_valid
 
-        self._calibrate_odom()
-
-    def _calibrate_odom(self):
-        """Spinlock until odometry callback received to determine correct offsets to use."""
-        self.odom_calibrated = False
-        self.odom_position_offset = np.array([0.0, 0.0], dtype=np.float32)
-        self.yaw_offset = 0.0
-
-        # self._print_and_log("Calibrating odometry offsets...")
-
-        start_time = time.time()
-        timeout = 3.0  # seconds
-
-        while not self.odom_calibrated and (time.time() - start_time) < timeout:
-            rclpy.spin_once(self.node, timeout_sec=0.05)
-        if not self.odom_calibrated:
-            raise RuntimeError("Odometry calibration timed out.")
+        max_attempts = 1000
+        for _ in range(max_attempts):
+            start_x = round(np.random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
+            start_y = round(np.random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
+            if not is_spawn_position_valid(start_x, start_y, bounds=self.map_bounds):
+                continue
+            goal_x = round(np.random.uniform(self.map_bounds['x_min'], self.map_bounds['x_max']), 2)
+            goal_y = round(np.random.uniform(self.map_bounds['y_min'], self.map_bounds['y_max']), 2)
+            if not is_spawn_position_valid(goal_x, goal_y, bounds=self.map_bounds):
+                continue
+            distance = np.sqrt((goal_x - start_x) ** 2 + (goal_y - start_y) ** 2)
+            if distance >= self.min_distance:
+                return np.array([start_x, start_y], dtype=np.float32), np.array([goal_x, goal_y], dtype=np.float32)
+        self._print_and_log("Warning: Could not generate valid positions, using fallback")
+        return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
     def _print_and_log(self, message):
         self.node.get_logger().info(message)
 
+    # ============================================================
+    # 可视化标记
+    # ============================================================
+
+    def _update_marker_visuals(self):
+        """Spawn or move visual markers for start/goal in Gazebo."""
+        if not self.markers_initialized:
+            self._spawn_marker(self.start_marker_name, self.start_position, color="0 1 0 1")
+            self._spawn_marker(self.goal_marker_name, self.goal_position, color="1 0 0 1")
+            self.markers_initialized = True
+        else:
+            self._move_marker(self.start_marker_name, self.start_position)
+            self._move_marker(self.goal_marker_name, self.goal_position)
+
+    def _spawn_marker(self, name, position, color="1 0 0 1"):
+        """Spawn a flat cylinder marker via Gazebo entity factory."""
+        sdf_string = f"""
+        <?xml version="1.0" ?>
+        <sdf version="1.6">
+            <model name="{name}">
+                <static>true</static>
+                <link name="link">
+                    <visual name="visual">
+                        <geometry>
+                            <cylinder>
+                                <radius>0.2</radius>
+                                <length>0.01</length>
+                            </cylinder>
+                        </geometry>
+                        <material>
+                            <ambient>{color}</ambient>
+                            <diffuse>{color}</diffuse>
+                            <specular>0 0 0 1</specular>
+                        </material>
+                    </visual>
+                </link>
+            </model>
+        </sdf>
+        """
+
+        req = EntityFactory()
+        req.sdf = sdf_string
+        req.pose.position.x = float(position[0])
+        req.pose.position.y = float(position[1])
+        req.pose.position.z = 0.01
+
+        service_name = "/world/maze/create"
+        try:
+            self.gz_node.request(service_name, req, EntityFactory, Boolean, 1000)
+        except Exception as e:
+            self._print_and_log(f"Failed to spawn marker {name}: {e}")
+
+    def _move_marker(self, name, position):
+        pose_msg = GzPose()
+        pose_msg.name = name
+        pose_msg.position.x = float(position[0])
+        pose_msg.position.y = float(position[1])
+        pose_msg.position.z = 0.01
+        pose_msg.orientation.w = 1.0
+
+        service_name = "/world/maze/set_pose"
+        try:
+            self.gz_node.request(service_name, pose_msg, GzPose, Boolean, 300)
+        except Exception as e:
+            self._print_and_log(f"Failed to move marker {name}: {e}")
+
     def close(self):
         self._send_stop_command()
-        self.node.destroy_node()
+        try:
+            self.node.destroy_node()
+        except Exception:
+            pass
         rclpy.shutdown()

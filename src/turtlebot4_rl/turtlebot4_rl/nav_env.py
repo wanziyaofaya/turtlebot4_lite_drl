@@ -25,8 +25,8 @@ class RegressionLabelStats(NamedTuple):
 
 # Constants
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
-SUBGOAL_REACH_THRESHOLD = 0.1 # 子目标到达阈值（米）
-SUBGOAL_REWARD = 20.0 # 到达子目标的奖励
+SUBGOAL_REACH_THRESHOLD = 0.25 # 子目标到达阈值（米）
+SUBGOAL_REWARD = 50.0 # 到达子目标的奖励
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=2.0, positions_file=None, subgoal_model_path=None):
@@ -295,7 +295,7 @@ class TurtleBotNavEnv(gym.Env):
         self._update_marker_visuals()
 
         # Reset position in Gazebo
-        self._reset_robot_position()
+        self.reset_success = self._reset_robot_position()
         self._print_and_log(f"Resetting robot to start: x={self.start_position[0]:.2f}, y={self.start_position[1]:.2f} | goal: x={self.goal_position[0]:.2f}, y={self.goal_position[1]:.2f}")
         
         # Wait for model state to be received (updates self.current_position and self.current_yaw)
@@ -322,7 +322,7 @@ class TurtleBotNavEnv(gym.Env):
         self.last_action = np.array([0.0, 0.0], dtype=np.float32)
 
         # Wait for initial observations (wait for 10 frames to ensure stability, matching dataset generator)
-        for _ in range(10):
+        for _ in range(2):
             if not self._wait_for_new_state():
                 raise RuntimeError("No LiDAR data received after reset timeout.")
 
@@ -399,6 +399,7 @@ class TurtleBotNavEnv(gym.Env):
         target = distance_to_goal < GOAL_REACH_THRESHOLD
         
         subgoal_reached = False
+        # Replace GOAL_REACH_THRESHOLD with SUBGOAL_REACH_THRESHOLD for subgoal checks
         if self.subgoal_model is not None and target:
             dist_to_global = np.linalg.norm(self.global_goal_position - self.current_position)
             if dist_to_global < GOAL_REACH_THRESHOLD:
@@ -408,11 +409,8 @@ class TurtleBotNavEnv(gym.Env):
                 # Reached subgoal
                 subgoal_reached = True
                 target = False # Continue episode
-                
-                # Predict next subgoal
-                # FIXME: 模型仅在 Yaw=-90 (朝南) 时训练，无法在任意角度下预测。
-                # 因此在 step() 中禁用预测，仅在 reset() 时预测一次。
-                subgoal = None # self._predict_subgoal()
+                subgoal = None
+                # subgoal = self._predict_subgoal()
                 if subgoal is not None:
                     self.goal_position = subgoal
                     if self.subgoal_marker_spawned:
@@ -429,14 +427,14 @@ class TurtleBotNavEnv(gym.Env):
                         self._spawn_marker(self.subgoal_marker_name, self.goal_position, color="0 1 0 1")
                         self.subgoal_marker_spawned = True
                     self._print_and_log("Subgoal finished. Switching to global goal.")
-                
+
                 # Update metrics for new goal
                 self.prev_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
                 goal_vector = self.goal_position - self.current_position
                 angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
                 self.prev_angle_to_goal = angle_to_goal_global - self.current_yaw
                 self.prev_angle_to_goal = (self.prev_angle_to_goal + np.pi) % (2 * np.pi) - np.pi
-                
+
                 # Update cached metrics
                 distance_to_goal, angle_to_goal = self._compute_goal_metrics()
                 self._cached_distance_to_goal = distance_to_goal
@@ -644,6 +642,7 @@ class TurtleBotNavEnv(gym.Env):
     def _reset_robot_position(self):
         """
         Reset the robot's position using Gazebo transport.
+        Returns True if successful, False otherwise.
         """
         pose_msg = GzPose()
         pose_msg.name = "turtlebot4"
@@ -663,20 +662,17 @@ class TurtleBotNavEnv(gym.Env):
         service_name = "/world/maze/set_pose"
         timeout_ms = 1000
 
-        # self._print_and_log(f"Resetting robot to position: x={self.start_position[0]}, y={self.start_position[1]}")
-
         try:
             result, response = self.gz_node.request(service_name, pose_msg, GzPose, Boolean, timeout_ms)
             if result and response and response.data:
                 self._print_and_log("Robot position reset successfully")
+                return True
             else:
                 self._print_and_log(f"Position reset failed: result={result}, response.data={response.data if response else 'None'}")
-                # Don't raise exception, just warn - position tracking will still work
-                self._print_and_log("Continuing with Gazebo model state tracking...")
+                return False
         except Exception as e:
             self._print_and_log(f"Service call failed: {e}")
-            self._print_and_log("Continuing with Gazebo model state tracking...")
-        # time.sleep(0.5)
+            return False
 
     def _wait_for_model_state(self):
         """Wait for initial model state from Gazebo topic."""
@@ -729,7 +725,7 @@ class TurtleBotNavEnv(gym.Env):
             
             num_embeddings = rtdl_num_embeddings.PiecewiseLinearEmbeddings(
                 bins=bins,
-                d_embedding=16,
+                d_embedding=32,  # 与训练时保持一致
                 activation=False,
                 version='B',
             )
@@ -753,6 +749,36 @@ class TurtleBotNavEnv(gym.Env):
             self._print_and_log(f"Failed to load subgoal model: {e}")
             self.subgoal_model = None
 
+    # def _rotate_lidar_to_world_frame(self, lidar_data, current_yaw, training_yaw=-np.pi/2):
+    #     """
+    #     将 LiDAR 数据从当前机器人坐标系旋转到训练时的参考坐标系。
+        
+    #     训练时机器人 yaw 固定为 -90°（-π/2），LiDAR beam 0 对应机器人正前方。
+    #     推理时机器人 yaw 已改变，需要旋转 LiDAR 数据使其与训练时一致。
+        
+    #     Args:
+    #         lidar_data: 64维 LiDAR 数据
+    #         current_yaw: 当前机器人的 yaw 角度
+    #         training_yaw: 训练时的 yaw 角度，默认 -π/2
+        
+    #     Returns:
+    #         旋转后的 LiDAR 数据
+    #     """
+    #     n_beams = len(lidar_data)
+        
+    #     # 计算需要旋转的角度差
+    #     yaw_diff = current_yaw - training_yaw
+        
+    #     # 将角度差转换为 beam 偏移量
+    #     # 假设 LiDAR 覆盖 360°，每个 beam 覆盖 360°/64 = 5.625°
+    #     angle_per_beam = 2 * np.pi / n_beams
+    #     beam_shift = int(round(yaw_diff / angle_per_beam))
+        
+    #     # 循环移位 LiDAR 数据
+    #     rotated_lidar = np.roll(lidar_data, -beam_shift)
+        
+    #     return rotated_lidar
+
     def _predict_subgoal(self):
         if self.subgoal_model is None:
             return None
@@ -764,9 +790,15 @@ class TurtleBotNavEnv(gym.Env):
         try:
             current_x, current_y = self.current_position
             goal_x, goal_y = self.global_goal_position
-            
-            # Lidar data (64 beams)
             lidar = self.lidar_data_64
+
+            
+            # Lidar data (64 beams) - 旋转到训练时的参考坐标系
+            # lidar_raw = self.lidar_data_64
+            # lidar = self._rotate_lidar_to_world_frame(lidar_raw, self.current_yaw)
+            
+            # self._print_and_log(f"LiDAR rotated: yaw={self.current_yaw:.2f}, shift={int(round((self.current_yaw - (-np.pi/2)) / (2*np.pi/64)))} beams")
+            
             # Concatenate: [start_x, start_y, goal_x, goal_y, lidar...]
             input_features = np.concatenate([
                 np.array([current_x, current_y, goal_x, goal_y], dtype=np.float32),

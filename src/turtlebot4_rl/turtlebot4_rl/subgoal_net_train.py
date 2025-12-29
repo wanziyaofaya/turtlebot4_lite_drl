@@ -41,7 +41,7 @@ TaskType = Literal['regression', 'binclass', 'multiclass']
 task_type: TaskType = 'regression'
 n_classes = None
 
-file_path = 'models/subgoal_dataset_64.txt'
+file_path = 'models/subgoal_dataset.txt'
 target_cols = ['subgoal_x', 'subgoal_y']
 
 if os.path.exists(file_path):
@@ -142,10 +142,10 @@ grad_scaler = torch.cuda.amp.GradScaler() if amp_dtype is torch.float16 else Non
 print(f'Device:        {device.type.upper()}')
 print(f'AMP:           {amp_enabled}{f" ({amp_dtype})"if amp_enabled else ""}')
 
-bins = rtdl_num_embeddings.compute_bins(data['train']['x_num'], n_bins=128)
+bins = rtdl_num_embeddings.compute_bins(data['train']['x_num'], n_bins=512)
 num_embeddings = rtdl_num_embeddings.PiecewiseLinearEmbeddings(
-    bins, # 将每个特征划分为128个区间
-    d_embedding=16, # 每个特征映射到16维空间
+    bins, # 将每个特征划分为512个区间
+    d_embedding=32, # 每个特征映射到32维空间
     activation=False,
     version='B',
 )
@@ -155,8 +155,7 @@ model = tabm.TabM.make(
     cat_cardinalities=cat_cardinalities,
     d_out=n_outputs,
     num_embeddings=num_embeddings,
-    # widen/deepen backbone for better capacity
-    n_blocks=3, # 模型中残差块（Residual Blocks）的数量
+    n_blocks=3, # 模型中残差块的数量
     d_block=640, # 每个块中隐藏层的维度（即神经元的数量）
     dropout=0.0,
     k=8,
@@ -216,7 +215,7 @@ print(f'Test score before training: {evaluate("test")["score"]:.4f}')
 
 n_epochs = 180
 train_size = len(train_idx)
-batch_size = 512
+batch_size = 256
 
 # 余弦退火 + 线性 warmup 调度
 warmup_epochs = min(10, max(1, n_epochs // 5))
