@@ -25,7 +25,7 @@ class RegressionLabelStats(NamedTuple):
 
 # Constants
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
-SUBGOAL_REACH_THRESHOLD = 0.25 # 子目标到达阈值（米）
+SUBGOAL_REACH_THRESHOLD = 0.3 # 子目标到达阈值（米）
 SUBGOAL_REWARD = 50.0 # 到达子目标的奖励
 
 class TurtleBotNavEnv(gym.Env):
@@ -651,8 +651,8 @@ class TurtleBotNavEnv(gym.Env):
         pose_msg.position.z = 0.0
 
         # Random initial yaw for better generalization
-        # yaw = np.random.uniform(-math.pi, math.pi)
-        yaw = -math.pi / 2
+        yaw = np.random.uniform(-math.pi, math.pi)
+        # yaw = -math.pi / 2
         self.last_reset_yaw = float(yaw)
         pose_msg.orientation.w = math.cos(yaw / 2.0)
         pose_msg.orientation.x = 0.0
