@@ -48,7 +48,7 @@ class TurtleBotRLNode(Node):
         # Initialize environment (will auto-generate random positions on each reset)
         # 设为 None 禁用子目标点预测，直接端到端训练
         # 如需启用子目标: '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20251226_104129.pt'
-        subgoal_model_path = '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20251229_201113.pt'
+        subgoal_model_path = '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20260102_003055.pt'
         # subgoal_model_path = None
         self.get_logger().info(f"Subgoal model path: {subgoal_model_path}")
         

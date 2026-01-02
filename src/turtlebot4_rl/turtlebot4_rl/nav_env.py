@@ -25,7 +25,7 @@ class RegressionLabelStats(NamedTuple):
 
 # Constants
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
-SUBGOAL_REACH_THRESHOLD = 0.3 # 子目标到达阈值（米）
+SUBGOAL_REACH_THRESHOLD = 0.1 # 子目标到达阈值（米）
 SUBGOAL_REWARD = 50.0 # 到达子目标的奖励
 
 class TurtleBotNavEnv(gym.Env):
@@ -790,6 +790,7 @@ class TurtleBotNavEnv(gym.Env):
         try:
             current_x, current_y = self.current_position
             goal_x, goal_y = self.global_goal_position
+            yaw = self.current_yaw
             lidar = self.lidar_data_64
 
             
@@ -799,9 +800,9 @@ class TurtleBotNavEnv(gym.Env):
             
             # self._print_and_log(f"LiDAR rotated: yaw={self.current_yaw:.2f}, shift={int(round((self.current_yaw - (-np.pi/2)) / (2*np.pi/64)))} beams")
             
-            # Concatenate: [start_x, start_y, goal_x, goal_y, lidar...]
+            # Concatenate: [start_x, start_y, goal_x, goal_y, yaw, lidar...]
             input_features = np.concatenate([
-                np.array([current_x, current_y, goal_x, goal_y], dtype=np.float32),
+                np.array([current_x, current_y, goal_x, goal_y, yaw], dtype=np.float32),
                 lidar
             ])
             
