@@ -824,6 +824,12 @@ class TurtleBotNavEnv(gym.Env):
                 prediction = prediction * std + mean
             
             self._print_and_log(f"🤖 Neural Network Predicted Subgoal: x={prediction[0]:.4f}, y={prediction[1]:.4f}")
+            
+            # 如果子目标点距离起点小于0.51，直接返回终点
+            dist_to_start = np.linalg.norm(prediction - self.current_position)
+            if dist_to_start < 0.51:
+                self._print_and_log(f"⚡ Subgoal too close to start ({dist_to_start:.4f} < 0.68), using global goal instead.")
+                return self.global_goal_position.astype(np.float32)
                 
             return prediction.astype(np.float32)
             
