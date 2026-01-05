@@ -26,7 +26,7 @@ class RegressionLabelStats(NamedTuple):
 # Constants
 GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
 SUBGOAL_REACH_THRESHOLD = 0.1 # 子目标到达阈值（米）
-SUBGOAL_REWARD = 50.0 # 到达子目标的奖励
+SUBGOAL_REWARD = 10.0 # 到达子目标的奖励
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=2.0, positions_file=None, subgoal_model_path=None):
@@ -322,7 +322,7 @@ class TurtleBotNavEnv(gym.Env):
         self.last_action = np.array([0.0, 0.0], dtype=np.float32)
 
         # Wait for initial observations (wait for 10 frames to ensure stability, matching dataset generator)
-        for _ in range(2):
+        for _ in range(5):
             if not self._wait_for_new_state():
                 raise RuntimeError("No LiDAR data received after reset timeout.")
 
@@ -825,9 +825,9 @@ class TurtleBotNavEnv(gym.Env):
             
             self._print_and_log(f"🤖 Neural Network Predicted Subgoal: x={prediction[0]:.4f}, y={prediction[1]:.4f}")
             
-            # 如果子目标点距离起点小于0.51，直接返回终点
+            # 如果子目标点距离起点小于0.3，直接返回终点
             dist_to_start = np.linalg.norm(prediction - self.current_position)
-            if dist_to_start < 0.51:
+            if dist_to_start < 0.3:
                 self._print_and_log(f"⚡ Subgoal too close to start ({dist_to_start:.4f} < 0.68), using global goal instead.")
                 return self.global_goal_position.astype(np.float32)
                 
