@@ -24,9 +24,8 @@ class RegressionLabelStats(NamedTuple):
     std: np.ndarray
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.1  # 目标到达阈值（米）
-SUBGOAL_REACH_THRESHOLD = 0.1 # 子目标到达阈值（米）
-SUBGOAL_REWARD = 10.0 # 到达子目标的奖励
+GOAL_REACH_THRESHOLD = 0.1  # 全局目标到达阈值（米）
+SUBGOAL_SWITCH_THRESHOLD = 0.2  # 子目标切换阈值（米）- 接近子目标时静默切换
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=2.0, positions_file=None, subgoal_model_path=None):
@@ -151,7 +150,9 @@ class TurtleBotNavEnv(gym.Env):
         self.subgoal_preprocessing = None
         self.subgoal_label_stats = None
         self.device = torch.device('cpu')
-        self.global_goal_position = None
+        self.global_goal_position = None  # 真正的全局终点
+        self.current_goal = None  # RL 智能体看到的"当前目标"（可能是子目标或全局终点）
+        self.using_subgoal = False  # 当前是否在追踪子目标
         self.lidar_data_64 = None
         
         if subgoal_model_path:
@@ -326,27 +327,47 @@ class TurtleBotNavEnv(gym.Env):
         if not self._wait_for_new_state(num_updates=5):
             raise RuntimeError("No LiDAR data received after reset timeout.")
 
-        # --- Subgoal Logic Start ---
+        # --- Subgoal Logic Start (Goal Masquerading) ---
+        # 保存全局终点，设置 RL 看到的 current_goal
+        self.global_goal_position = self.goal_position.copy()
+        self.using_subgoal = False
+        
         if self.subgoal_model is not None:
-            # 检查 Yaw 是否接近 -90 度 (-pi/2)
-            if abs(self.current_yaw - (-math.pi / 2)) > 0.1:
-                self._print_and_log(f"Warning: Robot Yaw ({self.current_yaw:.2f}) is not -90 deg. Subgoal prediction may be inaccurate.")
-
-            self.global_goal_position = self.goal_position.copy()
             subgoal = self._predict_subgoal()
             if subgoal is not None:
-                self.goal_position = subgoal
-                self._print_and_log(f"Initial Subgoal: {self.goal_position}")
-                if self.subgoal_marker_spawned:
-                    self._move_marker(self.subgoal_marker_name, self.goal_position)
+                dist_subgoal_to_global = np.linalg.norm(subgoal - self.global_goal_position)
+                dist_subgoal_to_start = np.linalg.norm(subgoal - self.current_position)
+                
+                # 子目标太近全局终点 -> 直接用全局终点
+                if dist_subgoal_to_global < SUBGOAL_SWITCH_THRESHOLD:
+                    self._print_and_log(f"[Internal] Subgoal too close to global goal ({dist_subgoal_to_global:.3f}m), using global goal directly.")
+                    self.current_goal = self.global_goal_position.copy()
+                    self.using_subgoal = False
+                # 子目标太近起点 -> 直接用全局终点（避免刚开始就切换）
+                elif dist_subgoal_to_start < SUBGOAL_SWITCH_THRESHOLD:
+                    self._print_and_log(f"[Internal] Subgoal too close to start ({dist_subgoal_to_start:.3f}m), using global goal directly.")
+                    self.current_goal = self.global_goal_position.copy()
+                    self.using_subgoal = False
                 else:
-                    self._spawn_marker(self.subgoal_marker_name, self.goal_position, color="0 0 1 1")
+                    # 静默设置子目标为 current_goal，RL 不知道这是子目标
+                    self.current_goal = subgoal
+                    self.using_subgoal = True
+                self._print_and_log(f"[Internal] Using subgoal: {self.current_goal}")
+                if self.subgoal_marker_spawned:
+                    self._move_marker(self.subgoal_marker_name, self.current_goal)
+                else:
+                    self._spawn_marker(self.subgoal_marker_name, self.current_goal, color="0 0 1 1")
                     self.subgoal_marker_spawned = True
             else:
                 self._print_and_log("Subgoal prediction failed, using global goal.")
-                self.goal_position = self.global_goal_position
+                self.current_goal = self.global_goal_position.copy()
+        else:
+            self.current_goal = self.global_goal_position.copy()
         
-        # Recalculate metrics with potentially new goal
+        # goal_position 现在指向 RL 看到的目标
+        self.goal_position = self.current_goal
+        
+        # Recalculate metrics with current_goal
         self.prev_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
         goal_vector = self.goal_position - self.current_position
         angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
@@ -396,46 +417,35 @@ class TurtleBotNavEnv(gym.Env):
 
         # Get current state
         done, collision, min_lidar = self._is_collision()
-        target = distance_to_goal < GOAL_REACH_THRESHOLD
         
-        subgoal_reached = False
-        # Replace GOAL_REACH_THRESHOLD with SUBGOAL_REACH_THRESHOLD for subgoal checks
-        if self.subgoal_model is not None and target:
-            dist_to_global = np.linalg.norm(self.global_goal_position - self.current_position)
-            if dist_to_global < GOAL_REACH_THRESHOLD:
-                # Reached global goal
-                pass
-            else:
-                # Reached subgoal
-                subgoal_reached = True
-                target = False # Continue episode
-                subgoal = None
-                # subgoal = self._predict_subgoal()
-                if subgoal is not None:
-                    self.goal_position = subgoal
-                    if self.subgoal_marker_spawned:
-                        self._move_marker(self.subgoal_marker_name, self.goal_position)
-                    else:
-                        self._spawn_marker(self.subgoal_marker_name, self.goal_position, color="0 0 1 1")
-                        self.subgoal_marker_spawned = True
-                    self._print_and_log(f"Reached subgoal. Next: {self.goal_position}")
-                else:
-                    self.goal_position = self.global_goal_position
-                    if self.subgoal_marker_spawned:
-                        self._move_marker(self.subgoal_marker_name, self.goal_position)
-                    else:
-                        self._spawn_marker(self.subgoal_marker_name, self.goal_position, color="0 1 0 1")
-                        self.subgoal_marker_spawned = True
-                    self._print_and_log("Subgoal finished. Switching to global goal.")
-
-                # Update metrics for new goal
+        # --- Goal Masquerading: 静默切换目标 ---
+        dist_to_current_goal = distance_to_goal
+        dist_to_global_goal = np.linalg.norm(self.global_goal_position - self.current_position)
+        
+        # 检查是否到达全局终点
+        target = dist_to_global_goal < GOAL_REACH_THRESHOLD
+        
+        # 如果正在追踪子目标，检查是否需要切换
+        if self.using_subgoal and not target and not collision:
+            if dist_to_current_goal < SUBGOAL_SWITCH_THRESHOLD:
+                # 接近子目标，静默切换到全局终点
+                self._print_and_log(f"[Internal] Switching from subgoal to global goal (dist={dist_to_current_goal:.3f})")
+                self.goal_position = self.global_goal_position.copy()
+                self.current_goal = self.global_goal_position.copy()
+                self.using_subgoal = False
+                
+                # 更新可视化
+                if self.subgoal_marker_spawned:
+                    self._move_marker(self.subgoal_marker_name, self.goal_position)
+                
+                # 重新计算 metrics（平滑过渡，不产生奖励跳变）
                 self.prev_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
                 goal_vector = self.goal_position - self.current_position
                 angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
                 self.prev_angle_to_goal = angle_to_goal_global - self.current_yaw
                 self.prev_angle_to_goal = (self.prev_angle_to_goal + np.pi) % (2 * np.pi) - np.pi
-
-                # Update cached metrics
+                
+                # 更新 cached metrics
                 distance_to_goal, angle_to_goal = self._compute_goal_metrics()
                 self._cached_distance_to_goal = distance_to_goal
                 self._cached_angle_to_goal = angle_to_goal
@@ -447,13 +457,13 @@ class TurtleBotNavEnv(gym.Env):
             done = True
             self._print_and_log("Warning: Model state may not have been updated after action.")
 
+        # 奖励计算：完全基于 current_goal，无子目标特殊奖励
         reward = self._calculate_reward(
             target,
             collision,
             model_updated,
             distance_to_goal=distance_to_goal,
-            angle_to_goal=angle_to_goal,
-            subgoal_reached=subgoal_reached
+            angle_to_goal=angle_to_goal
         )
         info = {'is_success': False, 'is_collision': False}
         if target:
@@ -562,15 +572,16 @@ class TurtleBotNavEnv(gym.Env):
         angle_to_goal = (angle_to_goal + np.pi) % (2 * np.pi) - np.pi
         return distance_to_goal, float(angle_to_goal)
 
-    def _calculate_reward(self, target, collision, model_updated, distance_to_goal=None, angle_to_goal=None, subgoal_reached=False):
+    def _calculate_reward(self, target, collision, model_updated, distance_to_goal=None, angle_to_goal=None):
+        """
+        统一的奖励函数 - Goal Masquerading 策略
+        RL 智能体只知道它在追踪一个"当前目标"，奖励完全基于距离改进
+        没有子目标特殊奖励，保持奖励函数连续平滑
+        """
         if target:
             target_reward = 100.0
             self._print_and_log(f"🎯 REWARD: Target reached! reward={target_reward:.3f}")
             return target_reward
-        elif subgoal_reached:
-            subgoal_reward = SUBGOAL_REWARD
-            self._print_and_log(f"🚩 REWARD: Subgoal reached! reward={subgoal_reward:.3f}")
-            return subgoal_reward
         elif collision:
             collision_reward = -100.0
             self._print_and_log(f"💥 REWARD: Collision! reward={collision_reward:.3f}")
