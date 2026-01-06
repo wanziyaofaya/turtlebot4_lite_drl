@@ -3,3 +3,4 @@ gymnasium
 tensorboard
 tabm
 scikit-learn
+numpy<2
