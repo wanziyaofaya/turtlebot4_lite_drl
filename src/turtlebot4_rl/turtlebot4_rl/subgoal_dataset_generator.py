@@ -87,7 +87,7 @@ def generate_subgoal_dataset(env, model_dir, num_samples=250000, output_file='su
 # 可执行入口
 if __name__ == "__main__":
     import argparse
-    from turtlebot4_rl.nav_env import TurtleBotNavEnv
+    from turtlebot4_rl.nav_env_hrl import TurtleBotNavEnv
 
     parser = argparse.ArgumentParser(description="生成TurtleBot子目标点数据集")
     parser.add_argument('--model_dir', type=str, default='models', help='数据集保存目录')

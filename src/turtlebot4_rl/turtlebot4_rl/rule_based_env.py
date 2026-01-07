@@ -108,7 +108,7 @@ class RuleBasedSubgoalGenerator:
         return nodes[idx]
 
 if __name__ == "__main__":
-    from turtlebot4_rl.nav_env import TurtleBotNavEnv
+    from turtlebot4_rl.nav_env_hrl import TurtleBotNavEnv
 
     # 随机生成起点和终点，类似rl_node.py
     def generate_random_positions(min_distance=2, map_bounds=None):
@@ -132,7 +132,7 @@ if __name__ == "__main__":
         return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
     if __name__ == "__main__":
-        from turtlebot4_rl.nav_env import TurtleBotNavEnv
+        from turtlebot4_rl.nav_env_hrl import TurtleBotNavEnv
         # 随机生成起点和终点
         start, goal = generate_random_positions()
         env = TurtleBotNavEnv(start, goal)
