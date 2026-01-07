@@ -53,7 +53,7 @@ class TurtleBotNavEnv(gym.Env):
             if os.path.exists('positions_6000.json'):
                 positions_file = os.path.abspath('positions_6000.json')
             else:
-                positions_file = '/home/turtlebot4/subgoal_turtlebot4_lite_drl/positions_6000.json'
+                positions_file = '/home/wanzi/turtlebot4_lite_drl/positions_6000.json'
         
         try:
             import json
