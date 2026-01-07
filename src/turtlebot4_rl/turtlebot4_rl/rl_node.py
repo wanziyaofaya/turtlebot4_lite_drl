@@ -2,7 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
-from turtlebot4_rl.nav_env import TurtleBotNavEnv
+from turtlebot4_rl.nav_env_hrl import TurtleBotNavEnv
 from stable_baselines3 import PPO, DQN, SAC
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import configure
@@ -48,7 +48,7 @@ class TurtleBotRLNode(Node):
         # Initialize environment (will auto-generate random positions on each reset)
         # 设为 None 禁用子目标点预测，直接端到端训练
         # 如需启用子目标: '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20251226_104129.pt'
-        subgoal_model_path = '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20260104_145401.pt'
+        subgoal_model_path = '/home/turtlebot4/subgoal_turtlebot4_lite_drl/models/subgoal_tabm_20260104_145401.pt'
         # subgoal_model_path = None
         self.get_logger().info(f"Subgoal model path: {subgoal_model_path}")
         
