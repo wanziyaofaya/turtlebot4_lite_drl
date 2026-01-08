@@ -1,154 +1,203 @@
 import numpy as np
-import rclpy
-from math import *
+from typing import Optional
 
 class RuleBasedSubgoalGenerator:
-    def __init__(self, lidar_size=640, max_range=12.0):
-        self.lidar_size = lidar_size
-        self.max_range = max_range
+    """Rule-based subgoal generator.
 
-    def calculate_heuristic_score(x, y, dist_o, dist_g, dist_l1, dist_l2, kernel_size, resolution):
-        from turtlebot4_rl.collision import is_position_valid
-        d1 = np.tanh(np.exp((dist_o / dist_l1) ** 2) / exp((dist_l2 / dist_l1) ** 2)) * dist_l2
-        d2 = dist_g
+    Notes:
+    - This generator is intended to consume the environment's *raw* LiDAR ranges
+      (e.g. 640 beams in meters), such as `TurtleBotNavEnv.raw_data`.
+    """
 
-        point_information = 0
-        count = 0
-        half_size = kernel_size / 2
-        x_min = max(-1.5, x - half_size)
-        x_max = min(1.5, x + half_size)
-        y_min = max(-1.5, y - half_size)
-        y_max = min(1.5, y + half_size)
-        xi = x_min
-        while xi < x_max:
-            yj = y_min
-            while yj < y_max:
-                if not is_position_valid(xi, yj):
-                    point_information += 5
+    def __init__(
+        self,
+        lidar_size: int = 640,
+        max_range: float = 6.0,
+        debug: bool = False,
+        *,
+        gap_diff_threshold: float = 0.25,
+        max_range_run_min_len: int = 35,
+        max_range_sample_step: int = 10,
+        free_space_candidate_dist: float = 0.66,
+        gap_candidate_scale: float = 0.90,
+        safety_margin: float = 0.10,
+        max_range_epsilon: float = 1e-3,
+    ):
+        self.lidar_size = int(lidar_size)
+        self.max_range = float(max_range)
+        self.debug = bool(debug)
+        self.gap_diff_threshold = float(gap_diff_threshold)
+        self.max_range_run_min_len = int(max_range_run_min_len)
+        self.max_range_sample_step = max(1, int(max_range_sample_step))
+        self.free_space_candidate_dist = float(free_space_candidate_dist)
+        self.gap_candidate_scale = float(gap_candidate_scale)
+        self.safety_margin = float(safety_margin)
+        self.max_range_epsilon = float(max_range_epsilon)
+
+    def _beam_deg(self, beam_index: float) -> float:
+        # Map beam index -> angle in degrees.
+        # Your LiDAR FOV is [-180, 180]. For N beams, assume they span the full range.
+        # Using (N-1) makes the first beam exactly -180 and the last exactly +180.
+        n = max(2, int(self.lidar_size))
+        return -180.0 + float(beam_index) * (360.0 / float(n - 1))
+
+    def _beam_rad_from_scan(self, beam_index: float, *, scan_angle_min: float, scan_angle_increment: float) -> float:
+        """Map beam index -> angle in radians using LaserScan metadata."""
+        return float(scan_angle_min) + float(beam_index) * float(scan_angle_increment)
+
+    def _append_free_space_candidates(self, nodes, start_idx: int, end_idx: int, *, odomX, odomY, angle):
+        # Place a candidate every N beams inside a max-range run.
+        if end_idx < start_idx:
+            return
+        run_len = int(end_idx - start_idx + 1)
+        if run_len < self.max_range_run_min_len:
+            return
+        step = int(self.max_range_sample_step)
+        # Sample around the center of each step-sized chunk.
+        half = (step - 1) / 2.0
+        for k in range(start_idx, end_idx + 1, step):
+            beam = min(float(end_idx), float(k) + half)
+            beam_angl = self._beam_deg(beam)
+            dist = float(min(self.free_space_candidate_dist, self.max_range))
+            qx = dist * np.cos(np.radians(beam_angl + angle))
+            qy = dist * np.sin(np.radians(beam_angl + angle))
+            nodes.append([qx + odomX, qy + odomY])
+
+    def _has_consecutive_clear_beams(self, lidar: np.ndarray, *, threshold: float, min_run_len: int) -> bool:
+        """Return True if there exists a consecutive run of beams with ranges > threshold.
+
+        Args:
+            lidar: 1D array of ranges (meters), length == self.lidar_size.
+            threshold: meters.
+            min_run_len: minimum consecutive count.
+        """
+        run = 0
+        for d in lidar:
+            if float(d) > float(threshold):
+                run += 1
+                if run >= int(min_run_len):
+                    return True
+            else:
+                run = 0
+        return False
+
+    def _qualifying_clear_beam_indices(self, lidar: np.ndarray, *, threshold: float, min_run_len: int) -> np.ndarray:
+        """Return indices of beams that belong to any qualifying consecutive clear run.
+
+        A qualifying run is a consecutive segment where lidar[i] > threshold and
+        run length >= min_run_len.
+        """
+        lidar = np.asarray(lidar, dtype=np.float32)
+        indices = []
+        run_start = None
+        run_len = 0
+        for i in range(lidar.shape[0]):
+            if float(lidar[i]) > float(threshold):
+                if run_start is None:
+                    run_start = i
+                    run_len = 1
                 else:
-                    point_information += 1
-                count += 1
-                yj += resolution
-            xi += resolution
-        if count == 0:
-            I = 0
-        else:
-            I = min(50, exp(point_information / count))
-        return d1 + d2 + I
+                    run_len += 1
+            else:
+                if run_start is not None and run_len >= int(min_run_len):
+                    indices.extend(range(run_start, run_start + run_len))
+                run_start = None
+                run_len = 0
+
+        # tail segment
+        if run_start is not None and run_len >= int(min_run_len):
+            indices.extend(range(run_start, run_start + run_len))
+
+        if not indices:
+            return np.asarray([], dtype=np.int32)
+        return np.asarray(indices, dtype=np.int32)
     
-    def get_subgoal(self, lidar_data, odomX, odomY, angle, dist_s, dist_g):
+    def get_subgoal(
+        self,
+        lidar_data,
+        odomX,
+        odomY,
+        angle,
+        dist_s,
+        dist_g,
+        goalX,
+        goalY,
+        *,
+        bounds: Optional[dict] = None,
+        scan_angle_min: Optional[float] = None,
+        scan_angle_increment: Optional[float] = None,
+        scan_yaw_offset_rad: float = 0.0,
+    ) -> Optional[np.ndarray]:
         """
         输入: lidar_data (np.ndarray), 机器人位置和朝向
         输出: subgoal (np.ndarray) - 生成的子目标点坐标 (x, y)
+
+        规则（按你的需求实现）：
+        - 仅判断传入的 640 维激光值
+                - 如果存在一段“连续 >20 束”的激光值都 > 1.2m，则：
+                    仅沿这些满足条件的激光束方向，在 1.2m 处放置候选点
+        - 候选点评分 = 候选点与全局目标的欧氏距离；选取最小者
+        - 若不满足连续区间条件，返回 None
         """
-        if lidar_data is None or len(lidar_data) != self.lidar_size:
-            return np.array([0.0, 0.0], dtype=np.float32)
+        if lidar_data is None:
+            return None
+        lidar = np.asarray(lidar_data, dtype=np.float32)
+        if lidar.size != int(self.lidar_size):
+            return None
+        # Sanitize NaN/Inf and clamp to max range.
+        lidar = np.nan_to_num(lidar, nan=self.max_range, posinf=self.max_range, neginf=0.0)
+        lidar = np.clip(lidar, 0.0, self.max_range)
 
-        nodes = []
-        # --- new_nodes 规则 ---
-        for i in range(1, len(lidar_data)):
-            if lidar_data[i] < 7.5:
-                dist = lidar_data[i]
-                angl = i / 4 - 90
-                qx = dist * np.cos(np.radians(angl + angle))
-                qy = dist * np.sin(np.radians(angl + angle))
-                nodes.append([qx + odomX, qy + odomY])
-            if abs(lidar_data[i - 1] - lidar_data[i]) > 1.5 and lidar_data[i - 1] < 8.5 and lidar_data[i] < 8.5:
-                dist = (lidar_data[i - 1] + lidar_data[i]) / 2
-                angl = i / (2 * 2) - 90
-                qx = dist * np.cos(np.radians(angl + angle))
-                qy = dist * np.sin(np.radians(angl + angle))
-                nodes.append([qx + odomX, qy + odomY])
+        # Condition: exists a consecutive run longer than the given beam count with range > 1.2m.
+        # “连续大于20束” -> min_run_len = 21.
+        threshold = 1.2
+        min_run_len = 21
+        qualifying_idx = self._qualifying_clear_beam_indices(lidar, threshold=threshold, min_run_len=min_run_len)
+        if qualifying_idx.size == 0:
+            return None
 
-        # --- free_space_nodes 规则 ---
-        count5 = 0
-        for i in range(1, len(lidar_data)):
-            if 4.5 < lidar_data[i] < 9.9:
-                count5 += 1
-                continue
-            if count5 > 35:
-                dist = 4
-                angl = (i - count5 / 2) / (2 * 2) - 90
-                qx = dist * np.cos(np.radians(angl + angle))
-                qy = dist * np.sin(np.radians(angl + angle))
-                nodes.append([qx + odomX, qy + odomY])
-                count5 = 0
+        # Generate candidates only along those qualifying beam directions, at exactly 1.2m.
+        # Prefer LaserScan angle_min/angle_increment (radians) when provided; otherwise
+        # fall back to assuming a uniform [-180, 180] deg mapping.
+        candidate_dist = float(min(threshold, self.max_range))
+        yaw_rad = float(np.radians(float(angle)))
+        scan_yaw_offset_rad = float(scan_yaw_offset_rad)
+        nodes = np.empty((int(qualifying_idx.size), 2), dtype=np.float32)
+        for j, i in enumerate(qualifying_idx.tolist()):
+            if scan_angle_min is not None and scan_angle_increment is not None:
+                beam_rad = self._beam_rad_from_scan(
+                    float(i),
+                    scan_angle_min=float(scan_angle_min),
+                    scan_angle_increment=float(scan_angle_increment),
+                )
             else:
-                count5 = 0
+                beam_rad = float(np.radians(self._beam_deg(float(i))))
 
-        # --- infinite_nodes 规则 ---
-        tmp_i = 0
-        save_i = 0
-        for i in range(1, len(lidar_data)):
-            if lidar_data[i] < 6.9:
-                if i - tmp_i > 50 and tmp_i > 0:
-                    dist = min(lidar_data[save_i], lidar_data[i])
-                    angl = (i - (i - save_i) / 2) / (2 * 2) - 90
-                    qx = dist * np.cos(np.radians(angl + angle))
-                    qy = dist * np.sin(np.radians(angl + angle))
-                    nodes.append([qx + odomX, qy + odomY])
-                tmp_i = i
+            heading_rad = float(beam_rad + yaw_rad + scan_yaw_offset_rad)
+            qx = candidate_dist * np.cos(heading_rad)
+            qy = candidate_dist * np.sin(heading_rad)
+            nodes[j, 0] = float(qx + float(odomX))
+            nodes[j, 1] = float(qy + float(odomY))
 
-        # 计算每个点的启发式分数并选择分数最小的点作为子目标点
-        if not nodes:
-            return np.array([0.0, 0.0], dtype=np.float32)
+        # Filter invalid candidates: invalid points do not participate in scoring.
+        from turtlebot4_rl.collision import is_position_valid
 
-        nodes = np.array(nodes)
-        heuristic_scores = []
+        valid_mask = np.zeros((nodes.shape[0],), dtype=bool)
+        for i in range(nodes.shape[0]):
+            x_i = float(nodes[i, 0])
+            y_i = float(nodes[i, 1])
+            valid_mask[i] = bool(is_position_valid(x_i, y_i, bounds=bounds))
 
-        dist_l1 = 5  # Inner distance limit for local heuristics discount
-        dist_l2 = 10  # Outer distance limit for local heuristics discount
-        kernel_size = 4 # Kernel size in pixels for map information heuristic calculation
-        for node in nodes:
-            x, y = node
-            score = self.calculate_heuristic_score(x, y, dist_s, dist_g, dist_l1, dist_l2, kernel_size,resolution=0.01)
-            heuristic_scores.append(score)
+        if not np.any(valid_mask):
+            return None
 
-        idx = np.argmin(heuristic_scores)
-        return nodes[idx]
+        valid_nodes = nodes[valid_mask]
 
-if __name__ == "__main__":
-    from turtlebot4_rl.nav_env_hrl import TurtleBotNavEnv
-
-    # 随机生成起点和终点，类似rl_node.py
-    def generate_random_positions(min_distance=2, map_bounds=None):
-        import random
-        import numpy as np
-        if map_bounds is None:
-            map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
-            # map_bounds = {'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3}
-        max_attempts = 3000
-        for _ in range(max_attempts):
-            start_x = round(random.uniform(map_bounds['x_min'], map_bounds['x_max']), 2)
-            start_y = round(random.uniform(map_bounds['y_min'], map_bounds['y_max']), 2)
-            goal_x = round(random.uniform(map_bounds['x_min'], map_bounds['x_max']), 2)
-            goal_y = round(random.uniform(map_bounds['y_min'], map_bounds['y_max']), 2)
-            distance = np.sqrt((goal_x - start_x)**2 + (goal_y - start_y)**2)
-            if distance >= min_distance:
-                start_pos = np.array([start_x, start_y], dtype=np.float32)
-                goal_pos = np.array([goal_x, goal_y], dtype=np.float32)
-                return start_pos, goal_pos
-        # fallback
-        return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
-
-    if __name__ == "__main__":
-        from turtlebot4_rl.nav_env_hrl import TurtleBotNavEnv
-        # 随机生成起点和终点
-        start, goal = generate_random_positions()
-        env = TurtleBotNavEnv(start, goal)
-        generator = RuleBasedSubgoalGenerator()
-        # 等待激光数据更新
-        import time
-        timeout = 5.0
-        start_time = time.time()
-        while env.lidar_data is None and (time.time() - start_time < timeout):
-            rclpy.spin_once(env.node, timeout_sec=0.05)
-        lidar_data = env.lidar_data
-        # 获取机器人当前位姿
-        odomX = env.current_position[0]
-        odomY = env.current_position[1]
-        angle = env.current_yaw
-        dist_s = np.linalg.norm(env.current_position - start)
-        dist_g = np.linalg.norm(env.current_position - goal)
-        subgoal = generator.get_subgoal(lidar_data, odomX, odomY, angle, dist_s, dist_g)
-        print(f"起点: {start}, 终点: {goal}, 机器人位置: ({odomX:.2f}, {odomY:.2f}), 朝向: {angle:.2f}, 生成的子目标点: {subgoal}")
+        # Score = distance to global goal; pick min among valid nodes.
+        goalX_f = float(goalX)
+        goalY_f = float(goalY)
+        dx = goalX_f - valid_nodes[:, 0].astype(np.float64)
+        dy = goalY_f - valid_nodes[:, 1].astype(np.float64)
+        scores = np.hypot(dx, dy)
+        idx = int(np.argmin(scores))
+        return valid_nodes[idx]

@@ -44,10 +44,9 @@ def astar(start, goal, resolution=0.01, env=None):
     # print("Obstacle count:", obstacle_count)
     # print("Total LiDAR points:", len(lidar_data))
     # print(f"Obstacle density p: {p:.4f}")
-    k = 1
     def heuristic(a, b):
         original_heuristic = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
-        heuristic = original_heuristic
+        heuristic = (1+p) * original_heuristic
         return heuristic
 
     def to_grid(p):
