@@ -52,5 +52,5 @@ export GAZEBO_PLUGIN_PATH=/opt/ros/jazzy/lib
 ros2 launch turtlebot4_gz_bringup turtlebot4_gz.launch.py model:=lite world:=maze
 python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 20000 --episodes 500
 python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 5000 --episodes 2000 --algorithm SAC
-tensorboard --logdir tensorboard_logs --port 6007
+tensorboard --logdir tensorboard_logs
 ```
