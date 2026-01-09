@@ -36,14 +36,9 @@ def astar(start, goal, resolution=0.01, env=None):
     if env is None or env.lidar_data is None:
         raise ValueError("Environment with valid LiDAR data is required to calculate obstacle density.")
 
-    # Calculate obstacle density (p value)
     lidar_data = env.raw_data
-    # print(lidar_data)
     obstacle_count = np.sum((lidar_data >= 0) & (lidar_data <= 0.85))
     p = obstacle_count / len(lidar_data)
-    # print("Obstacle count:", obstacle_count)
-    # print("Total LiDAR points:", len(lidar_data))
-    # print(f"Obstacle density p: {p:.4f}")
     def heuristic(a, b):
         original_heuristic = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
         heuristic = (1+p) * original_heuristic

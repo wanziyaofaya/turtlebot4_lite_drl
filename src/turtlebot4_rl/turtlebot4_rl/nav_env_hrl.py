@@ -24,7 +24,7 @@ class RegressionLabelStats(NamedTuple):
     std: np.ndarray
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.3  # 全局目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.1  # 全局目标到达阈值（米）
 SUBGOAL_SWITCH_THRESHOLD = 0.2  # 子目标切换阈值（米）- 接近子目标时静默切换
 
 class TurtleBotNavEnv(gym.Env):

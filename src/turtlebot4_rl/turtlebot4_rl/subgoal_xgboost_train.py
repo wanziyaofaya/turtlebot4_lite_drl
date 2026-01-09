@@ -121,22 +121,70 @@ def evaluate(part: str, models_list: list) -> dict:
     rmse = mse ** 0.5
     return {'mse': mse, 'r2': r2, 'rmse': rmse}
 
-# 自定义回调函数记录训练过程到 TensorBoard
+# 自定义回调函数记录训练/验证/测试集曲线到 TensorBoard
 class TensorBoardCallback(xgb.callback.TrainingCallback):
-    def __init__(self, writer, target_idx, models_so_far):
+    def __init__(self, writer, target_idx, data_numpy, regression_label_stats, models_so_far, n_outputs):
         self.writer = writer
         self.target_idx = target_idx
+        self.data_numpy = data_numpy
+        self.regression_label_stats = regression_label_stats
+        # 已经训练完成的其他目标模型（sklearn XGBRegressor 列表）
         self.models_so_far = models_so_far
-        self.iteration_offset = 0
-        
+        self.n_outputs = n_outputs
+
     def after_iteration(self, model, epoch, evals_log):
-        global_step = self.iteration_offset + epoch
-        
-        # 记录验证集 RMSE
-        if 'validation_0' in evals_log and 'rmse' in evals_log['validation_0']:
-            val_rmse = evals_log['validation_0']['rmse'][-1]
-            self.writer.add_scalar(f'target_{self.target_idx}/val_rmse', val_rmse, global_step)
-        
+        global_step = epoch
+
+        # 当前目标的 Booster
+        booster = model
+        mean_i = self.regression_label_stats.mean[self.target_idx]
+        std_i = self.regression_label_stats.std[self.target_idx]
+
+        # 先记录当前目标单独的曲线
+        for part in ['train', 'val', 'test']:
+            x = self.data_numpy[part]['x_num']
+            y_true_raw = self.data_numpy[part]['y'][:, self.target_idx]
+
+            dmat = xgb.DMatrix(x)
+            y_pred_norm = booster.predict(dmat)
+            y_pred = y_pred_norm * std_i + mean_i
+
+            mse = sklearn.metrics.mean_squared_error(y_true_raw, y_pred)
+            r2 = sklearn.metrics.r2_score(y_true_raw, y_pred)
+            rmse = mse ** 0.5
+
+            self.writer.add_scalar(f'target_{self.target_idx}/{part}_mse', mse, global_step)
+            self.writer.add_scalar(f'target_{self.target_idx}/{part}_rmse', rmse, global_step)
+
+        # 如果所有输出目标的模型都已经就绪，则再计算“整体”指标（x,y 平均）
+        # 只在训练最后一个目标时生效，这样整体指标就是两个 subgoal 的平均
+        num_trained_targets = len(self.models_so_far) + 1
+        if num_trained_targets == self.n_outputs:
+            boosters = [m.get_booster() for m in self.models_so_far] + [booster]
+
+            for part in ['train', 'val', 'test']:
+                x = self.data_numpy[part]['x_num']
+                y_true_all = self.data_numpy[part]['y'][:, :num_trained_targets]
+
+                dmat = xgb.DMatrix(x)
+                # 拼出所有目标的预测（先标准化空间，再反标准化）
+                preds = []
+                for j, b in enumerate(boosters):
+                    mean_j = self.regression_label_stats.mean[j]
+                    std_j = self.regression_label_stats.std[j]
+                    y_pred_norm_j = b.predict(dmat)
+                    y_pred_j = y_pred_norm_j * std_j + mean_j
+                    preds.append(y_pred_j)
+                y_pred_all = np.column_stack(preds)
+
+                mse = sklearn.metrics.mean_squared_error(y_true_all, y_pred_all)
+                r2 = sklearn.metrics.r2_score(y_true_all, y_pred_all)
+                rmse = mse ** 0.5
+
+                # 与 tabm 一致的 tag 名称，用于整体曲线对比
+                self.writer.add_scalar(f'{part}/mse', mse, global_step)
+                self.writer.add_scalar(f'{part}/rmse', rmse, global_step)
+
         return False
 
 # 为每个输出目标训练独立的模型
@@ -144,7 +192,7 @@ models = []
 for i in range(n_outputs):
     print(f"\nTraining model for target {i+1}/{n_outputs}...")
     
-    callback = TensorBoardCallback(writer, i, models)
+    callback = TensorBoardCallback(writer, i, data_numpy, regression_label_stats, models, n_outputs)
     
     model_i = xgb.XGBRegressor(
         **xgb_params,
@@ -188,7 +236,9 @@ model_save_path = os.path.join(model_save_dir, f'subgoal_xgboost_{run_timestamp}
 model_paths = []
 for i, m in enumerate(models):
     model_file = os.path.join(model_save_dir, f'subgoal_xgboost_{run_timestamp}_target_{i}.json')
-    m.save_model(model_file)
+    # 使用底层 Booster 保存模型，避免 sklearn 包装器中 _estimator_type 相关问题
+    booster = m.get_booster()
+    booster.save_model(model_file)
     model_paths.append(model_file)
 
 joblib.dump(
@@ -209,9 +259,6 @@ print(f'\nModel saved to {model_save_path}')
 writer.add_hparams(
     {'model': 'XGBoost', 'n_estimators': xgb_params['n_estimators'], 
      'max_depth': xgb_params['max_depth'], 'learning_rate': xgb_params['learning_rate']},
-    {'final/train_mse': eval_train['mse'], 'final/train_r2': eval_train['r2'], 'final/train_rmse': eval_train['rmse'],
-     'final/val_mse': eval_val['mse'], 'final/val_r2': eval_val['r2'], 'final/val_rmse': eval_val['rmse'],
-     'final/test_mse': eval_test['mse'], 'final/test_r2': eval_test['r2'], 'final/test_rmse': eval_test['rmse']}
 )
 
 writer.close()
