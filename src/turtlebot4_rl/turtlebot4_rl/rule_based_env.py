@@ -160,7 +160,8 @@ class RuleBasedSubgoalGenerator:
         # Prefer LaserScan angle_min/angle_increment (radians) when provided; otherwise
         # fall back to assuming a uniform [-180, 180] deg mapping.
         candidate_dist = float(min(threshold, self.max_range))
-        yaw_rad = float(np.radians(float(angle)))
+        # `angle` is expected to be robot yaw in radians (world frame)
+        yaw_rad = float(angle)
         scan_yaw_offset_rad = float(scan_yaw_offset_rad)
         nodes = np.empty((int(qualifying_idx.size), 2), dtype=np.float32)
         for j, i in enumerate(qualifying_idx.tolist()):
