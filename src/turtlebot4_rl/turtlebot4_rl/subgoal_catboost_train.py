@@ -22,7 +22,7 @@ set_seed(42)
 TaskType = Literal['regression', 'binclass', 'multiclass']
 task_type: TaskType = 'regression'
 
-file_path = 'models/subgoal_dataset_0.2.txt'
+file_path = 'models/subgoal_dataset.txt'
 target_cols = ['subgoal_x', 'subgoal_y']
 
 if os.path.exists(file_path):
