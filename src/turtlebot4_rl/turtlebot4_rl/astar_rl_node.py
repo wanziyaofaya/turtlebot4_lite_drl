@@ -2,7 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
-from turtlebot4_rl.nav_env_hrl import TurtleBotNavEnv
+from turtlebot4_rl.astar_nav_env import TurtleBotNavEnv
 from stable_baselines3 import PPO, DQN, SAC
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import configure
