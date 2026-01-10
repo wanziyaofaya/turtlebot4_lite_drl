@@ -1,11 +1,14 @@
 import heapq
 import numpy as np
-from collision import is_position_valid
+from turtlebot4_rl.collision import is_position_valid
 
 def is_obstacle_free(start, end, step_size=0.01):
     """检查从start到end的直线路径上是否有障碍物"""
     dist = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
     steps = int(dist / step_size)
+    if steps <= 0:
+        # start 与 end 非常近时，避免除零；检查 end 点即可
+        return bool(is_position_valid(float(end[0]), float(end[1])))
     for i in range(steps + 1):
         t = i / steps
         x = start[0] + t * (end[0] - start[0])
@@ -15,26 +18,25 @@ def is_obstacle_free(start, end, step_size=0.01):
     return True
 
 def remove_redundant_nodes(path):
-            if len(path) < 2:
-                return path
-            # 先检查起点能否直接连接终点
-            if is_obstacle_free(path[0], path[-1]):
-                return [path[0], path[-1]]
-            simplified_path = [path[0]]  # 保留起点
-            for i in range(1, len(path) - 1):
-                start = simplified_path[-1]
-                end = path[i + 1]
-                # 检查从start到end的连线是否无障碍
-                if is_obstacle_free(start, end):
-                    continue  # True,无障碍，中间节点冗余，跳过
-                else:
-                    simplified_path.append(path[i])  # False,保留当前节点
-            simplified_path.append(path[-1])  # 保留终点
-            return simplified_path
+    if len(path) < 2:
+        return path
+    # 先检查起点能否直接连接终点
+    if is_obstacle_free(path[0], path[-1]):
+        return [path[0], path[-1]]
+    simplified_path = [path[0]]  # 保留起点
+    for i in range(1, len(path) - 1):
+        start = simplified_path[-1]
+        end = path[i + 1]
+        # 检查从start到end的连线是否无障碍
+        if is_obstacle_free(start, end):
+            continue  # True,无障碍，中间节点冗余，跳过
+        else:
+            simplified_path.append(path[i])  # False,保留当前节点
+    simplified_path.append(path[-1])  # 保留终点
+    return simplified_path
 
 def astar(start, goal, resolution=0.01, env=None):
-    if env is None or env.lidar_data is None:
-        raise ValueError("Environment with valid LiDAR data is required to calculate obstacle density.")
+    # env 参数保留以便未来扩展（例如根据 LiDAR/代价地图调整代价），当前实现不强制依赖
 
     def heuristic(a, b):
         original_heuristic = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
