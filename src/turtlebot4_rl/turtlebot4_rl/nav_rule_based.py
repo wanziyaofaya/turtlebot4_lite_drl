@@ -46,12 +46,12 @@ class TurtleBotNavEnv(gym.Env):
         self.node = rclpy.create_node('turtlebot_nav_env')
         
         # 地图边界和位置生成配置
-        self.map_bounds = map_bounds if map_bounds is not None else {
-            'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2
-        }
         # self.map_bounds = map_bounds if map_bounds is not None else {
-        #     'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3
+        #     'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2
         # }
+        self.map_bounds = map_bounds if map_bounds is not None else {
+            'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3
+        }
         # self.map_bounds = map_bounds if map_bounds is not None else {
         #     'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5
         # }
@@ -87,8 +87,8 @@ class TurtleBotNavEnv(gym.Env):
         self.MAX_ANGULAR_VEL = 1.9
         
         # LiDAR & Goal configuration
-        self.LIDAR_MAX_RANGE = 6.0  # Maximum LiDAR range in meters
-        self.MAX_GOAL_DIST = 6.0  # Maximum distance for goal normalization
+        self.LIDAR_MAX_RANGE = 9.0  # Maximum LiDAR range in meters
+        self.MAX_GOAL_DIST = 9.0  # Maximum distance for goal normalization
 
         # LaserScan metadata (for rule-based subgoal generation)
         self.scan_angle_min = None
