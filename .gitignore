@@ -167,5 +167,7 @@ install
 tensorboard_logs
 odom_stats.csv
 runs
-positions_6000.json
+positions_4.json
+positions_6.json
+positions_10.json
 models
