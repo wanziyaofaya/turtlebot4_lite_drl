@@ -34,8 +34,8 @@ class TurtleBotRLNode(Node):
         self.eval_start_index = eval_start_index  # 评估时起始 positions 索引（仅在使用 positions_6000.json 时生效）
 
         # Map boundaries (based on the warehouse map)
-        self.map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
-        # self.map_bounds = {'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3}
+        # self.map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
+        self.map_bounds = {'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3}
         # self.map_bounds = {'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5}
 
         self.model_dir = os.path.join('models', self.algorithm)
@@ -215,7 +215,7 @@ def main(args=None):
     arg_parser.add_argument('--timesteps', type=int, default=10000, help='Base timesteps per unit (total = timesteps × episodes)')
     arg_parser.add_argument('--episodes', type=int, default=10, help='Multiplier for total timesteps (total = timesteps × episodes)')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
-    arg_parser.add_argument('--min_distance', type=float, default=2, help='Minimum distance between start and goal positions')
+    arg_parser.add_argument('--min_distance', type=float, default=4, help='Minimum distance between start and goal positions')
     arg_parser.add_argument('--eval_only', action='store_true', help='If set, skip training and only evaluate the provided model_path')
     arg_parser.add_argument('--eval_start_index', type=int, default=None, help='Evaluation start index in positions_6000.json (e.g., 3000)')
 
