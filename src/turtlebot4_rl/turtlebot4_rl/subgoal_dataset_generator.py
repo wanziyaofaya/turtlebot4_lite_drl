@@ -2,7 +2,7 @@ import os
 import time
 import rclpy
 
-def generate_subgoal_dataset(env, model_dir, num_samples=250000, output_file='subgoal_dataset_0.35.txt'):
+def generate_subgoal_dataset(env, model_dir, num_samples=250000, output_file='subgoal_dataset_6.txt'):
     """
     生成子目标点数据集，每条数据包括：起点、终点、yaw角度、子目标点、激光信息。
     确保 start、goal、yaw、lidar_data 和 A* 规划都在同一时刻、同一位置采集。
@@ -64,8 +64,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="生成TurtleBot子目标点数据集")
     parser.add_argument('--model_dir', type=str, default='models', help='数据集保存目录')
     parser.add_argument('--num_samples', type=int, default=250000, help='生成样本数量')
-    parser.add_argument('--output_file', type=str, default='subgoal_dataset_0.35.txt', help='输出文件名')
-    parser.add_argument('--min_distance', type=float, default=2, help='起点与终点最小距离')
+    parser.add_argument('--output_file', type=str, default='subgoal_dataset_6.txt', help='输出文件名')
+    parser.add_argument('--min_distance', type=float, default=4, help='起点与终点最小距离')
     parser.add_argument('--start_x', type=float, default=0.0, help='起点x坐标')
     parser.add_argument('--start_y', type=float, default=0.0, help='起点y坐标')
     parser.add_argument('--goal_x', type=float, default=5.0, help='终点x坐标')
@@ -75,8 +75,8 @@ if __name__ == "__main__":
     # 初始化环境（只用默认参数，起点终点后续设置）
     env = TurtleBotNavEnv(
         max_wait_for_observation=50.0,
-        map_bounds={'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2},
-        # map_bounds={'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3},
+        # map_bounds={'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2},
+        map_bounds={'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3},
         # map_bounds={'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5},
         min_distance=args.min_distance
     )
@@ -87,7 +87,7 @@ if __name__ == "__main__":
         args.model_dir,
         num_samples=args.num_samples,
         output_file=args.output_file,
-        min_distance=args.min_distance
+        # min_distance=args.min_distance
     )
 
 # python3 src/turtlebot4_rl/turtlebot4_rl/subgoal_dataset_generator.py

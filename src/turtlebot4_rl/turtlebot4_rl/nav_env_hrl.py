@@ -56,10 +56,10 @@ class TurtleBotNavEnv(gym.Env):
         self.position_index = 0
         if positions_file is None:
             # 优先尝试当前工作目录下的文件
-            if os.path.exists('positions_6000.json'):
-                positions_file = os.path.abspath('positions_6000.json')
+            if os.path.exists('positions_6.json'):
+                positions_file = os.path.abspath('positions_6.json')
             else:
-                positions_file = '/home/wanzi/turtlebot4_lite_drl/positions_6000.json'
+                positions_file = '/home/wanzi/turtlebot4_lite_drl/positions_6.json'
         
         try:
             import json
@@ -287,7 +287,7 @@ class TurtleBotNavEnv(gym.Env):
                 self.start_position = start
                 self.goal_position = goal
             except Exception as e:
-                self._print_and_log(f"positions_6000.json 格式错误，使用随机起终点: {e}")
+                self._print_and_log(f"positions_6.json 格式错误，使用随机起终点: {e}")
                 self.start_position, self.goal_position = self._generate_random_positions()
         else:
             self.start_position, self.goal_position = self._generate_random_positions()
