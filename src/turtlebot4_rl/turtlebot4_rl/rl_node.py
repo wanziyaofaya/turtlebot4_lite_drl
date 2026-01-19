@@ -22,7 +22,7 @@ class RegressionLabelStats(NamedTuple):
 class TurtleBotRLNode(Node):
     """ROS2节点：可训练或仅评估强化学习模型。"""
 
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=2, eval_only=False, eval_start_index=None):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=4, eval_only=False, eval_start_index=None):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -49,8 +49,8 @@ class TurtleBotRLNode(Node):
         # Initialize environment (will auto-generate random positions on each reset)
         # 设为 None 禁用子目标点预测，直接端到端训练
         # 如需启用子目标: '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20251226_104129.pt'
-        # subgoal_model_path = '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20260104_145401.pt'
-        subgoal_model_path = None
+        subgoal_model_path = '/home/wanzi/turtlebot4_lite_drl/models/subgoal_tabm_20260119_145253.pt'
+        # subgoal_model_path = None
         self.get_logger().info(f"Subgoal model path: {subgoal_model_path}")
         
         self.env = TurtleBotNavEnv(
@@ -126,7 +126,7 @@ class TurtleBotRLNode(Node):
                     tau=0.005,
                     train_freq=1,
                     gradient_steps=1,
-                    learning_starts=5000,
+                    learning_starts=10000,
                     ent_coef='auto',
                     target_entropy=-1.5*action_dim,
                     policy_kwargs=dict(

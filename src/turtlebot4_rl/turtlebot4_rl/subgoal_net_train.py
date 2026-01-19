@@ -41,7 +41,7 @@ TaskType = Literal['regression', 'binclass', 'multiclass']
 task_type: TaskType = 'regression'
 n_classes = None
 
-file_path = 'models/subgoal_dataset_.txt'
+file_path = 'models/subgoal_dataset_6.txt'
 target_cols = ['subgoal_x', 'subgoal_y']
 
 if os.path.exists(file_path):

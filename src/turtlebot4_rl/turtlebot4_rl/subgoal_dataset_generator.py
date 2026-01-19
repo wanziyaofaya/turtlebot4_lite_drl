@@ -2,7 +2,7 @@ import os
 import time
 import rclpy
 
-def generate_subgoal_dataset(env, model_dir, num_samples=250000, output_file='subgoal_dataset_6.txt'):
+def generate_subgoal_dataset(env, model_dir, num_samples=600000, output_file='subgoal_dataset_6.txt'):
     """
     生成子目标点数据集，每条数据包括：起点、终点、yaw角度、子目标点、激光信息。
     确保 start、goal、yaw、lidar_data 和 A* 规划都在同一时刻、同一位置采集。
@@ -63,7 +63,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="生成TurtleBot子目标点数据集")
     parser.add_argument('--model_dir', type=str, default='models', help='数据集保存目录')
-    parser.add_argument('--num_samples', type=int, default=250000, help='生成样本数量')
+    parser.add_argument('--num_samples', type=int, default=600000, help='生成样本数量')
     parser.add_argument('--output_file', type=str, default='subgoal_dataset_6.txt', help='输出文件名')
     parser.add_argument('--min_distance', type=float, default=4, help='起点与终点最小距离')
     parser.add_argument('--start_x', type=float, default=0.0, help='起点x坐标')
