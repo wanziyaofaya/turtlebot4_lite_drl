@@ -26,6 +26,8 @@ class RegressionLabelStats(NamedTuple):
 # Constants
 GOAL_REACH_THRESHOLD = 0.1  # 全局目标到达阈值（米）
 SUBGOAL_SWITCH_THRESHOLD = 0.2  # 子目标切换阈值（米）- 接近子目标时静默切换
+SUBGOAL_STOP_GENERATION_DISTANCE = 1.5  # 当机器人距全局终点小于该值时，不再生成新的子目标，直接追踪全局终点
+SUBGOAL_CLOSE_TO_GOAL_THRESHOLD = 0.5  # 若预测子目标距全局终点小于该值，则直接使用全局终点
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=2.0, positions_file=None, subgoal_model_path=None):
@@ -270,6 +272,20 @@ class TurtleBotNavEnv(gym.Env):
         self._print_and_log("Warning: Could not generate valid positions, using fallback")
         return np.array([0.0, 0.0], dtype=np.float32), np.array([2.0, 2.0], dtype=np.float32)
 
+    def _is_subgoal_valid(self, subgoal: np.ndarray) -> bool:
+        """使用 is_position_valid 判断 current_goal(子目标) 是否合理（与障碍物/边界保持安全距离）。"""
+        if subgoal is None:
+            return False
+        try:
+            x = float(subgoal[0])
+            y = float(subgoal[1])
+        except Exception:
+            return False
+        if not (np.isfinite(x) and np.isfinite(y)):
+            return False
+        from turtlebot4_rl.collision import is_position_valid
+        return bool(is_position_valid(x, y, bounds=self.map_bounds))
+
     def reset(self, *, seed=None, options=None):
         """Reset the environment with new random start and goal positions."""
         
@@ -337,28 +353,48 @@ class TurtleBotNavEnv(gym.Env):
         # 保存全局终点，设置 RL 看到的 current_goal
         self.global_goal_position = self.goal_position.copy()
         self.using_subgoal = False
-        
-        if self.subgoal_model is not None:
+
+        # 如果离全局终点已经很近，则不启用子目标，直接追踪全局终点
+        dist_to_global_goal = float(np.linalg.norm(self.global_goal_position - self.current_position))
+        if dist_to_global_goal < SUBGOAL_STOP_GENERATION_DISTANCE:
+            self._print_and_log(
+                f"[Internal] Close to global goal (dist={dist_to_global_goal:.3f}m < {SUBGOAL_STOP_GENERATION_DISTANCE}), using global goal directly."
+            )
+            self.current_goal = self.global_goal_position.copy()
+            self.using_subgoal = False
+        elif self.subgoal_model is not None:
             subgoal = self._predict_subgoal()
             if subgoal is not None:
-                dist_subgoal_to_global = np.linalg.norm(subgoal - self.global_goal_position)
-                dist_subgoal_to_start = np.linalg.norm(subgoal - self.current_position)
-                
-                # 子目标太近全局终点 -> 直接用全局终点
-                if dist_subgoal_to_global < SUBGOAL_SWITCH_THRESHOLD:
-                    self._print_and_log(f"[Internal] Subgoal too close to global goal ({dist_subgoal_to_global:.3f}m), using global goal directly.")
+                dist_subgoal_to_current = float(np.linalg.norm(subgoal - self.current_position))
+                dist_subgoal_to_global = float(np.linalg.norm(subgoal - self.global_goal_position))
+
+                # 子目标若落在障碍物/边界安全距离内，直接回退到全局目标
+                if not self._is_subgoal_valid(subgoal):
+                    self._print_and_log("[Internal] Subgoal invalid by is_position_valid; using global goal instead.")
                     self.current_goal = self.global_goal_position.copy()
                     self.using_subgoal = False
-                # 子目标太近起点 -> 直接用全局终点（避免刚开始就切换）
-                elif dist_subgoal_to_start < SUBGOAL_SWITCH_THRESHOLD:
-                    self._print_and_log(f"[Internal] Subgoal too close to start ({dist_subgoal_to_start:.3f}m), using global goal directly.")
+
+                # 子目标若已非常接近全局终点：直接追踪全局终点（等价于把终点当作子目标）
+                elif dist_subgoal_to_global < SUBGOAL_CLOSE_TO_GOAL_THRESHOLD:
+                    self._print_and_log(
+                        f"[Internal] Subgoal close to global goal (dist={dist_subgoal_to_global:.3f}m < {SUBGOAL_CLOSE_TO_GOAL_THRESHOLD}); using global goal instead."
+                    )
+                    self.current_goal = self.global_goal_position.copy()
+                    self.using_subgoal = False
+
+                # 子目标太近当前位置 -> 认为无效，退化为全局终点（避免刚开始就触发切换）
+                elif dist_subgoal_to_current < SUBGOAL_SWITCH_THRESHOLD:
+                    self._print_and_log(
+                        f"[Internal] Subgoal too close to current position ({dist_subgoal_to_current:.3f}m), using global goal instead."
+                    )
                     self.current_goal = self.global_goal_position.copy()
                     self.using_subgoal = False
                 else:
                     # 静默设置子目标为 current_goal，RL 不知道这是子目标
                     self.current_goal = subgoal
                     self.using_subgoal = True
-                self._print_and_log(f"[Internal] Using subgoal: {self.current_goal}")
+
+                self._print_and_log(f"[Internal] Using current_goal: {self.current_goal} (using_subgoal={self.using_subgoal})")
                 if self.subgoal_marker_spawned:
                     self._move_marker(self.subgoal_marker_name, self.current_goal)
                 else:
@@ -367,8 +403,11 @@ class TurtleBotNavEnv(gym.Env):
             else:
                 self._print_and_log("Subgoal prediction failed, using global goal.")
                 self.current_goal = self.global_goal_position.copy()
+                self.using_subgoal = False
         else:
             self.current_goal = self.global_goal_position.copy()
+            self.using_subgoal = False
+        # --- Subgoal Logic End ---
         
         # goal_position 现在指向 RL 看到的目标
         self.goal_position = self.current_goal
@@ -379,8 +418,6 @@ class TurtleBotNavEnv(gym.Env):
         angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
         self.prev_angle_to_goal = angle_to_goal_global - self.current_yaw
         self.prev_angle_to_goal = (self.prev_angle_to_goal + np.pi) % (2 * np.pi) - np.pi
-        # --- Subgoal Logic End ---
-
         return self._get_state(), {}
 
     def step(self, action):
@@ -431,26 +468,65 @@ class TurtleBotNavEnv(gym.Env):
         # 检查是否到达全局终点
         target = dist_to_global_goal < GOAL_REACH_THRESHOLD
         
-        # 如果正在追踪子目标，检查是否需要切换
+        # 如果正在追踪子目标，检查是否到达子目标：
+        # - 若离全局目标足够近 (<1.5m) -> 切回全局终点
+        # - 否则 -> 继续预测新的子目标，作为新的 current_goal
         if self.using_subgoal and not target and not collision:
             if dist_to_current_goal < SUBGOAL_SWITCH_THRESHOLD:
-                # 接近子目标，静默切换到全局终点
-                self._print_and_log(f"[Internal] Switching from subgoal to global goal (dist={dist_to_current_goal:.3f})")
-                self.goal_position = self.global_goal_position.copy()
-                self.current_goal = self.global_goal_position.copy()
-                self.using_subgoal = False
-                
-                # 更新可视化
+                if dist_to_global_goal < SUBGOAL_STOP_GENERATION_DISTANCE:
+                    # 接近全局终点，不再生成子目标，静默切回全局终点
+                    self._print_and_log(
+                        f"[Internal] Close to global goal (dist={dist_to_global_goal:.3f}m < {SUBGOAL_STOP_GENERATION_DISTANCE}), switching to global goal."
+                    )
+                    self.current_goal = self.global_goal_position.copy()
+                    self.using_subgoal = False
+                else:
+                    # 未接近全局终点：到达一个子目标后，继续预测新的子目标
+                    self._print_and_log(
+                        f"[Internal] Subgoal reached (dist={dist_to_current_goal:.3f}). Predicting next subgoal..."
+                    )
+                    next_subgoal = self._predict_subgoal()
+                    if next_subgoal is not None:
+                        dist_next_to_current = float(np.linalg.norm(next_subgoal - self.current_position))
+                        dist_next_to_global = float(np.linalg.norm(next_subgoal - self.global_goal_position))
+                        if not self._is_subgoal_valid(next_subgoal):
+                            self._print_and_log("[Internal] Next subgoal invalid by is_position_valid; using global goal as fallback.")
+                            self.current_goal = self.global_goal_position.copy()
+                            self.using_subgoal = False
+                        elif dist_next_to_global < SUBGOAL_CLOSE_TO_GOAL_THRESHOLD:
+                            self._print_and_log(
+                                f"[Internal] Next subgoal close to global goal (dist={dist_next_to_global:.3f}m < {SUBGOAL_CLOSE_TO_GOAL_THRESHOLD}); switching to global goal."
+                            )
+                            self.current_goal = self.global_goal_position.copy()
+                            self.using_subgoal = False
+                        elif dist_next_to_current < SUBGOAL_SWITCH_THRESHOLD:
+                            self._print_and_log(
+                                f"[Internal] Next subgoal too close to current position ({dist_next_to_current:.3f}m); using global goal as fallback."
+                            )
+                            self.current_goal = self.global_goal_position.copy()
+                            self.using_subgoal = False
+                        else:
+                            self.current_goal = next_subgoal
+                            self.using_subgoal = True
+                    else:
+                        self._print_and_log("[Internal] Subgoal prediction failed; using global goal as fallback.")
+                        self.current_goal = self.global_goal_position.copy()
+                        self.using_subgoal = False
+
+                # goal_position 始终指向 RL 看到的 current_goal
+                self.goal_position = self.current_goal.copy()
+
+                # 更新可视化（子目标 marker 用来显示 current_goal）
                 if self.subgoal_marker_spawned:
                     self._move_marker(self.subgoal_marker_name, self.goal_position)
-                
+
                 # 重新计算 metrics（平滑过渡，不产生奖励跳变）
                 self.prev_distance_to_goal = np.linalg.norm(self.goal_position - self.current_position)
                 goal_vector = self.goal_position - self.current_position
                 angle_to_goal_global = np.arctan2(goal_vector[1], goal_vector[0])
                 self.prev_angle_to_goal = angle_to_goal_global - self.current_yaw
                 self.prev_angle_to_goal = (self.prev_angle_to_goal + np.pi) % (2 * np.pi) - np.pi
-                
+
                 # 更新 cached metrics
                 distance_to_goal, angle_to_goal = self._compute_goal_metrics()
                 self._cached_distance_to_goal = distance_to_goal
@@ -620,7 +696,7 @@ class TurtleBotNavEnv(gym.Env):
                 distance_reward = distance_improvement
 
             # === 步数惩罚 ===
-            step_penalty = 0.5
+            step_penalty = 0.25
 
             # === 计算总奖励 ===
             total_reward = 100 * distance_reward - step_penalty
@@ -805,11 +881,13 @@ class TurtleBotNavEnv(gym.Env):
             
             self._print_and_log(f"🤖 Neural Network Predicted Subgoal: x={prediction[0]:.4f}, y={prediction[1]:.4f}")
             
-            # 如果子目标点距离起点小于0.3，直接返回终点
-            dist_to_start = np.linalg.norm(prediction - self.current_position)
-            if dist_to_start < 0.3:
-                self._print_and_log(f"⚡ Subgoal too close to start ({dist_to_start:.4f} < 0.68), using global goal instead.")
-                return self.global_goal_position.astype(np.float32)
+            # 如果子目标点距离当前位置过近，认为该预测无效（由上层决定回退策略）
+            dist_to_current = float(np.linalg.norm(prediction - self.current_position))
+            if dist_to_current < 0.3:
+                self._print_and_log(
+                    f"⚡ Subgoal too close to current position ({dist_to_current:.4f} < 0.3); ignoring this prediction."
+                )
+                return None
                 
             return prediction.astype(np.float32)
             

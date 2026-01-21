@@ -395,6 +395,13 @@ class TurtleBotNavEnv(gym.Env):
                 if subgoal is not None:
                     subgoal = np.asarray(subgoal, dtype=np.float32)
 
+        # 子目标合法性检查：如果落在障碍物/边界无效区域，直接回退到全局终点
+        if subgoal is not None and (not self._is_position_valid(subgoal)):
+            self._print_and_log(
+                f"[Internal] Subgoal invalid by is_position_valid(): {subgoal}. Using global goal instead."
+            )
+            subgoal = None
+
         if subgoal is not None:
             dist_subgoal_to_global = np.linalg.norm(subgoal - self.global_goal_position)
             dist_subgoal_to_start = np.linalg.norm(subgoal - self.current_position)
@@ -474,6 +481,20 @@ class TurtleBotNavEnv(gym.Env):
             return None
         return np.asarray(subgoal, dtype=np.float32)
 
+    def _is_position_valid(self, position: np.ndarray) -> bool:
+        """Check whether a (x, y) goal position is valid in the map.
+
+        Uses turtlebot4_rl.collision.is_position_valid (obstacles + optional bounds).
+        """
+        try:
+            from turtlebot4_rl.collision import is_position_valid
+
+            x = float(position[0])
+            y = float(position[1])
+            return bool(is_position_valid(x, y, bounds=self.map_bounds))
+        except Exception:
+            return False
+
     def step(self, action):
         """Execute one step in the environment."""
         # Execute action once
@@ -542,6 +563,18 @@ class TurtleBotNavEnv(gym.Env):
 
                 if next_goal is not None:
                     next_goal = np.asarray(next_goal, dtype=np.float32)
+
+                    # 子目标合法性检查：不合理则直接追全局终点
+                    if not self._is_position_valid(next_goal):
+                        self._print_and_log(
+                            f"[Internal] Next subgoal invalid by is_position_valid(): {next_goal}; using global goal."
+                        )
+                        self.current_goal = self.global_goal_position.copy()
+                        self.using_subgoal = False
+                        self.goal_position = self.current_goal
+                        next_goal = None
+
+                if next_goal is not None:
                     dist_next_to_global = float(np.linalg.norm(next_goal - self.global_goal_position))
                     dist_next_to_robot = float(np.linalg.norm(next_goal - self.current_position))
 
