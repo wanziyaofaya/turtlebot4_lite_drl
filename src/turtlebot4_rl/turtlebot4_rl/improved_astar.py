@@ -41,7 +41,7 @@ def astar(start, goal, resolution=0.01, env=None):
     p = obstacle_count / len(lidar_data)
     def heuristic(a, b):
         original_heuristic = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
-        heuristic = (1+p) * original_heuristic
+        heuristic = original_heuristic
         return heuristic
 
     def to_grid(p):

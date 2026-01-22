@@ -34,7 +34,7 @@ class TurtleBotNavEnv(gym.Env):
         self,
         max_wait_for_observation=5.0,
         map_bounds=None,
-        min_distance=2.0,
+        min_distance=7.0,
         positions_file=None,
         subgoal_model_path=None,
         subgoal_mode: str = "none",
@@ -50,12 +50,12 @@ class TurtleBotNavEnv(gym.Env):
         # self.map_bounds = map_bounds if map_bounds is not None else {
         #     'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2
         # }
-        self.map_bounds = map_bounds if map_bounds is not None else {
-            'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3
-        }
         # self.map_bounds = map_bounds if map_bounds is not None else {
-        #     'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5
+        #     'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3
         # }
+        self.map_bounds = map_bounds if map_bounds is not None else {
+            'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5
+        }
         self.min_distance = min_distance  # 起点和目标之间的最小距离
         
         # Placeholder values - will be set by reset() before first use
@@ -66,10 +66,10 @@ class TurtleBotNavEnv(gym.Env):
         self.position_index = 0
         if positions_file is None:
             # 优先尝试当前工作目录下的文件
-            if os.path.exists('positions_6.json'):
-                positions_file = os.path.abspath('positions_6.json')
+            if os.path.exists('positions_10.json'):
+                positions_file = os.path.abspath('positions_10.json')
             else:
-                positions_file = '/home/wanzi/turtlebot4_lite_drl/positions_6.json'
+                positions_file = '/home/wanzi/turtlebot4_lite_drl/positions_10.json'
         
         try:
             import json
@@ -88,8 +88,8 @@ class TurtleBotNavEnv(gym.Env):
         self.MAX_ANGULAR_VEL = 1.9
         
         # LiDAR & Goal configuration
-        self.LIDAR_MAX_RANGE = 9.0  # Maximum LiDAR range in meters
-        self.MAX_GOAL_DIST = 9.0  # Maximum distance for goal normalization
+        self.LIDAR_MAX_RANGE = 15.0  # Maximum LiDAR range in meters
+        self.MAX_GOAL_DIST = 15.0  # Maximum distance for goal normalization
 
         # LaserScan metadata (for rule-based subgoal generation)
         self.scan_angle_min = None
@@ -780,7 +780,7 @@ class TurtleBotNavEnv(gym.Env):
                 distance_reward = distance_improvement
 
             # === 步数惩罚 ===
-            step_penalty = 0.5
+            step_penalty = 0.1
 
             # === 计算总奖励 ===
             total_reward = 100 * distance_reward - step_penalty

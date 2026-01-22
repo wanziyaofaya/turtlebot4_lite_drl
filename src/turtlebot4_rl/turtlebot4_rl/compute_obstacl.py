@@ -67,7 +67,7 @@ def convert_to_rectangles(obstacles: Sequence[Dict[str, Any]]) -> List[Tuple[flo
 
 
 def main() -> None:
-	sdf_file = Path(__file__).resolve().parents[2] / "turtlebot4_gz_bringup" / "worlds" / "big_maze.sdf"
+	sdf_file = Path(__file__).resolve().parents[2] / "turtlebot4_gz_bringup" / "worlds" / "maze.sdf"
 	obstacles = extract_obstacles_from_sdf(sdf_file)
 	rectangles = convert_to_rectangles(obstacles)
 	for rect in rectangles:
