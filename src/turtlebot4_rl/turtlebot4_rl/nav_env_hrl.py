@@ -24,10 +24,12 @@ class RegressionLabelStats(NamedTuple):
     std: np.ndarray
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.1  # 全局目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.2  # 全局目标到达阈值（米）
 SUBGOAL_SWITCH_THRESHOLD = 0.2  # 子目标切换阈值（米）- 接近子目标时静默切换
 SUBGOAL_STOP_GENERATION_DISTANCE = 1.5  # 当机器人距全局终点小于该值时，不再生成新的子目标，直接追踪全局终点
 SUBGOAL_CLOSE_TO_GOAL_THRESHOLD = 0.5  # 若预测子目标距全局终点小于该值，则直接使用全局终点
+SUBGOAL_MAX_DISTANCE = 2.5  # 若预测子目标距离当前位置过远，则沿方向截断到该距离
+SUBGOAL_VALID_BACKOFF_STEP = 0.05  # 子目标不合法时，沿方向回退搜索的步长（米）
 
 class TurtleBotNavEnv(gym.Env):
     def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=7.0, positions_file=None, subgoal_model_path=None):
@@ -601,7 +603,7 @@ class TurtleBotNavEnv(gym.Env):
             lidar_array = np.asarray(self.lidar_data, dtype=np.float32)
             # Clip to max range and normalize to [0, 1]
             # lidar_data = np.clip(lidar_array, 0.0, self.LIDAR_MAX_RANGE) / self.LIDAR_MAX_RANGE
-            lidar_data = np.clip(lidar_array, 0.0, 1.0)
+            lidar_data = np.clip(lidar_array, 0.0, 2.0) / 2.0
             
         
         # Calculate current distance and angle to goal (reuse cached metrics when valid)
@@ -878,9 +880,24 @@ class TurtleBotNavEnv(gym.Env):
                 mean = self.subgoal_label_stats.mean
                 std = self.subgoal_label_stats.std
                 prediction = prediction * std + mean
-            
+
+            prediction = prediction.astype(np.float32)
             self._print_and_log(f"🤖 Neural Network Predicted Subgoal: x={prediction[0]:.4f}, y={prediction[1]:.4f}")
-            
+
+            # 若预测子目标过远：沿 (当前位置 -> 预测点) 方向截断到固定距离
+            prediction = self._cap_subgoal_distance(prediction, max_distance=SUBGOAL_MAX_DISTANCE)
+
+            # 强制确保候选子目标通过 is_position_valid：不合法则沿同方向回退搜索
+            prediction = self._project_subgoal_to_valid(
+                prediction,
+                max_distance=SUBGOAL_MAX_DISTANCE,
+                min_distance=0.3,
+                step=SUBGOAL_VALID_BACKOFF_STEP,
+            )
+            if prediction is None:
+                self._print_and_log("[Internal] No valid subgoal found along direction; ignoring prediction.")
+                return None
+
             # 如果子目标点距离当前位置过近，认为该预测无效（由上层决定回退策略）
             dist_to_current = float(np.linalg.norm(prediction - self.current_position))
             if dist_to_current < 0.3:
@@ -888,12 +905,103 @@ class TurtleBotNavEnv(gym.Env):
                     f"⚡ Subgoal too close to current position ({dist_to_current:.4f} < 0.3); ignoring this prediction."
                 )
                 return None
-                
-            return prediction.astype(np.float32)
+
+            return prediction
             
         except Exception as e:
             self._print_and_log(f"Error during subgoal prediction: {e}")
             return None
+
+    def _cap_subgoal_distance(self, subgoal: np.ndarray, max_distance: float) -> np.ndarray:
+        """将子目标距离限制在 max_distance 内：若过远则沿方向截断。
+
+        例：subgoal 距离当前位置 d>max_distance，则返回
+        current + (subgoal-current)/d * max_distance
+        """
+        if subgoal is None or self.current_position is None:
+            return subgoal
+
+        try:
+            max_distance = float(max_distance)
+        except Exception:
+            return subgoal
+
+        if not np.isfinite(max_distance) or max_distance <= 0.0:
+            return subgoal
+
+        subgoal = np.asarray(subgoal, dtype=np.float32)
+        current = np.asarray(self.current_position, dtype=np.float32)
+
+        direction = subgoal - current
+        distance = float(np.linalg.norm(direction))
+        if not np.isfinite(distance) or distance <= 1e-9:
+            return subgoal
+
+        if distance <= max_distance:
+            return subgoal
+
+        capped = current + direction / distance * max_distance
+        self._print_and_log(
+            f"[Internal] Subgoal too far (dist={distance:.3f}m > {max_distance:.3f}m); capped to x={capped[0]:.4f}, y={capped[1]:.4f}"
+        )
+        return capped.astype(np.float32)
+
+    def _project_subgoal_to_valid(
+        self,
+        subgoal: np.ndarray,
+        max_distance: float,
+        min_distance: float = 0.3,
+        step: float = 0.05,
+    ) -> np.ndarray | None:
+        """确保子目标通过 is_position_valid。
+
+        策略：沿 (当前位置 -> subgoal) 方向，从目标距离开始向后回退搜索，
+        找到第一个合法点就返回；找不到返回 None。
+        """
+        if subgoal is None or self.current_position is None:
+            return None
+
+        try:
+            max_distance = float(max_distance)
+            min_distance = float(min_distance)
+            step = float(step)
+        except Exception:
+            return None
+
+        if not (np.isfinite(max_distance) and max_distance > 0.0):
+            return None
+        if not (np.isfinite(min_distance) and min_distance >= 0.0):
+            min_distance = 0.0
+        if not (np.isfinite(step) and step > 0.0):
+            step = 0.05
+
+        current = np.asarray(self.current_position, dtype=np.float32)
+        subgoal = np.asarray(subgoal, dtype=np.float32)
+
+        direction = subgoal - current
+        dist = float(np.linalg.norm(direction))
+        if not np.isfinite(dist) or dist <= 1e-9:
+            return None
+
+        # 单位方向
+        unit = direction / dist
+
+        # 起始搜索距离：不超过 max_distance，且不超过当前 subgoal 的距离
+        start_d = min(dist, max_distance)
+
+        # 从远到近回退，保持“同方向”约束
+        d = start_d
+        while d >= min_distance - 1e-9:
+            candidate = current + unit * d
+            if self._is_subgoal_valid(candidate):
+                if d < start_d - 1e-6:
+                    self._print_and_log(
+                        f"[Internal] Subgoal invalid; backed off to valid point at dist={d:.3f}m (start={start_d:.3f}m)."
+                    )
+                return candidate.astype(np.float32)
+            d -= step
+
+        return None
 
     # ============================================================
     # === Gazebo Visualization Helper Methods ===
