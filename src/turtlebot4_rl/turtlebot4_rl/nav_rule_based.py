@@ -25,7 +25,7 @@ class RegressionLabelStats(NamedTuple):
     std: np.ndarray
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.1  # 全局目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.2  # 全局目标到达阈值（米）
 SUBGOAL_SWITCH_THRESHOLD = 0.2  # 子目标切换阈值（米）- 接近子目标时静默切换
 SUBGOAL_STOP_GENERATION_DISTANCE = 1.5  # 当机器人距全局终点小于该值时，不再生成新的子目标
 
@@ -685,7 +685,7 @@ class TurtleBotNavEnv(gym.Env):
             lidar_array = np.asarray(self.lidar_data, dtype=np.float32)
             # Clip to max range and normalize to [0, 1]
             # lidar_data = np.clip(lidar_array, 0.0, self.LIDAR_MAX_RANGE) / self.LIDAR_MAX_RANGE
-            lidar_data = np.clip(lidar_array, 0.0, 1.0)
+            lidar_data = np.clip(lidar_array, 0.0, 2.0) / 2.0
             
         
         # Calculate current distance and angle to goal (reuse cached metrics when valid)
