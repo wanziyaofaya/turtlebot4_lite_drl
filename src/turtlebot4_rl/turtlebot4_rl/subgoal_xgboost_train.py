@@ -22,7 +22,7 @@ set_seed(42)
 TaskType = Literal['regression', 'binclass', 'multiclass']
 task_type: TaskType = 'regression'
 
-file_path = 'models/subgoal_dataset.txt'
+file_path = 'models/subgoal_dataset_6.txt'
 target_cols = ['subgoal_x', 'subgoal_y']
 
 if os.path.exists(file_path):
@@ -95,7 +95,7 @@ writer = SummaryWriter(log_dir=f'runs/xgboost_{run_timestamp}')
 
 # XGBoost 参数
 xgb_params = {
-    'n_estimators': 500,
+    'n_estimators': 180,
     'max_depth': 8,
     'learning_rate': 0.05,
     'subsample': 0.8,
@@ -112,14 +112,29 @@ Y_val_normalized = (data_numpy['val']['y'] - regression_label_stats.mean) / regr
 
 def evaluate(part: str, models_list: list) -> dict:
     """评估模型性能"""
-    y_pred_normalized = np.column_stack([m.predict(data_numpy[part]['x_num']) for m in models_list])
-    y_pred = y_pred_normalized * regression_label_stats.std + regression_label_stats.mean
-    y_true = data_numpy[part]['y']
+    y_pred_normalized = np.column_stack(
+        [m.predict(data_numpy[part]['x_num']) for m in models_list]
+    )
+
+    # 只在已经训练出的目标维度上做评估，避免中途（只训练了 1 个 target）时形状不匹配
+    n_pred_outputs = y_pred_normalized.shape[1]
+    y_pred = (
+        y_pred_normalized * regression_label_stats.std[:n_pred_outputs]
+        + regression_label_stats.mean[:n_pred_outputs]
+    )
+    y_true = data_numpy[part]['y'][:, :n_pred_outputs]
+
+    # Mean Distance Error (MDE): 仅在二维 (x, y) 都就绪时计算
+    mde = (
+        float(np.mean(np.linalg.norm(y_pred - y_true, axis=1)))
+        if n_pred_outputs == 2
+        else float('nan')
+    )
     
     mse = sklearn.metrics.mean_squared_error(y_true, y_pred)
     r2 = sklearn.metrics.r2_score(y_true, y_pred)
     rmse = mse ** 0.5
-    return {'mse': mse, 'r2': r2, 'rmse': rmse}
+    return {'mse': mse, 'r2': r2, 'rmse': rmse, 'mde': mde}
 
 # 自定义回调函数记录训练/验证/测试集曲线到 TensorBoard
 class TensorBoardCallback(xgb.callback.TrainingCallback):
@@ -155,6 +170,7 @@ class TensorBoardCallback(xgb.callback.TrainingCallback):
 
             self.writer.add_scalar(f'target_{self.target_idx}/{part}_mse', mse, global_step)
             self.writer.add_scalar(f'target_{self.target_idx}/{part}_rmse', rmse, global_step)
+            self.writer.add_scalar(f'target_{self.target_idx}/{part}_r2', r2, global_step)
 
         # 如果所有输出目标的模型都已经就绪，则再计算“整体”指标（x,y 平均）
         # 只在训练最后一个目标时生效，这样整体指标就是两个 subgoal 的平均
@@ -180,10 +196,13 @@ class TensorBoardCallback(xgb.callback.TrainingCallback):
                 mse = sklearn.metrics.mean_squared_error(y_true_all, y_pred_all)
                 r2 = sklearn.metrics.r2_score(y_true_all, y_pred_all)
                 rmse = mse ** 0.5
+                mde = float(np.mean(np.linalg.norm(y_pred_all - y_true_all, axis=1)))
 
                 # 与 tabm 一致的 tag 名称，用于整体曲线对比
                 self.writer.add_scalar(f'{part}/mse', mse, global_step)
                 self.writer.add_scalar(f'{part}/rmse', rmse, global_step)
+                self.writer.add_scalar(f'{part}/mde', mde, global_step)
+                self.writer.add_scalar(f'{part}/r2', r2, global_step)
 
         return False
 
@@ -215,6 +234,12 @@ for i in range(n_outputs):
     writer.add_scalar(f'overall/val_mse_after_target_{i}', eval_val_i['mse'], i)
     writer.add_scalar(f'overall/test_mse_after_target_{i}', eval_test_i['mse'], i)
 
+    # 只有在 2D (x, y) 都训练完后，MDE 才有意义
+    if not np.isnan(eval_train_i['mde']):
+        writer.add_scalar(f'overall/train_mde_after_target_{i}', eval_train_i['mde'], i)
+        writer.add_scalar(f'overall/val_mde_after_target_{i}', eval_val_i['mde'], i)
+        writer.add_scalar(f'overall/test_mde_after_target_{i}', eval_test_i['mde'], i)
+
 # 最终评估
 eval_train = evaluate('train', models)
 eval_val = evaluate('val', models)
@@ -223,9 +248,9 @@ eval_test = evaluate('test', models)
 print('\n' + '='*40)
 print('XGBoost RESULTS')
 print('='*40)
-print(f'Train - MSE: {eval_train["mse"]:.6f} | R²: {eval_train["r2"]:.6f} | RMSE: {eval_train["rmse"]:.6f}')
-print(f'Val   - MSE: {eval_val["mse"]:.6f} | R²: {eval_val["r2"]:.6f} | RMSE: {eval_val["rmse"]:.6f}')
-print(f'Test  - MSE: {eval_test["mse"]:.6f} | R²: {eval_test["r2"]:.6f} | RMSE: {eval_test["rmse"]:.6f}')
+print(f'Train - MSE: {eval_train["mse"]:.6f} | R²: {eval_train["r2"]:.6f} | RMSE: {eval_train["rmse"]:.6f} | MDE: {eval_train["mde"]:.6f}')
+print(f'Val   - MSE: {eval_val["mse"]:.6f} | R²: {eval_val["r2"]:.6f} | RMSE: {eval_val["rmse"]:.6f} | MDE: {eval_val["mde"]:.6f}')
+print(f'Test  - MSE: {eval_test["mse"]:.6f} | R²: {eval_test["r2"]:.6f} | RMSE: {eval_test["rmse"]:.6f} | MDE: {eval_test["mde"]:.6f}')
 
 # 保存模型 - 使用 XGBoost 原生格式保存每个模型
 model_save_dir = 'models'
@@ -259,6 +284,20 @@ print(f'\nModel saved to {model_save_path}')
 writer.add_hparams(
     {'model': 'XGBoost', 'n_estimators': xgb_params['n_estimators'], 
      'max_depth': xgb_params['max_depth'], 'learning_rate': xgb_params['learning_rate']},
+    {
+        'final/train_mse': eval_train['mse'],
+        'final/train_r2': eval_train['r2'],
+        'final/train_rmse': eval_train['rmse'],
+        'final/train_mde': eval_train['mde'],
+        'final/val_mse': eval_val['mse'],
+        'final/val_r2': eval_val['r2'],
+        'final/val_rmse': eval_val['rmse'],
+        'final/val_mde': eval_val['mde'],
+        'final/test_mse': eval_test['mse'],
+        'final/test_r2': eval_test['r2'],
+        'final/test_rmse': eval_test['rmse'],
+        'final/test_mde': eval_test['mde'],
+    },
 )
 
 writer.close()

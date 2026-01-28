@@ -56,11 +56,6 @@ if os.path.exists(file_path):
     Y = df[target_cols].values.astype(np.float32)
 else:
     print("Warning: File not found, generating simulation data...")
-    N_SAMPLES = 2000
-    X_num = np.random.randn(N_SAMPLES, 8).astype(np.float32)
-    y1 = X_num[:, 0] + X_num[:, 1] * 0.5
-    y2 = X_num[:, 0] * -1 + X_num[:, 2]
-    Y = np.column_stack([y1, y2]).astype(np.float32)
 
 task_is_regression = task_type == 'regression'
 n_num_features = X_num.shape[1]
@@ -205,11 +200,15 @@ def evaluate(part: str) -> dict:
     y_pred = y_pred.mean(axis=1)
     y_true = data[part]['y'].cpu().numpy()
 
+    # Mean Distance Error (MDE): 2D 目标点 (x, y) 的欧氏距离均值
+    # 每个样本的距离 = ||pred - true||_2
+    mde = float(np.mean(np.linalg.norm(y_pred - y_true, axis=1)))
+
     mse = sklearn.metrics.mean_squared_error(y_true, y_pred)
     r2 = sklearn.metrics.r2_score(y_true, y_pred)
     score = -(mse ** 0.5)
 
-    return {'score': float(score), 'mse': mse, 'r2': r2}
+    return {'score': float(score), 'mse': mse, 'r2': r2, 'mde': mde}
 
 print(f'Test score before training: {evaluate("test")["score"]:.4f}')
 
@@ -301,13 +300,16 @@ for epoch in range(n_epochs):
     writer.add_scalar('val/mse', eval_val['mse'], epoch)
     writer.add_scalar('val/r2', eval_val['r2'], epoch)
     writer.add_scalar('val/rmse', -eval_val['score'], epoch)
+    writer.add_scalar('val/mde', eval_val['mde'], epoch)
     writer.add_scalar('test/mse', eval_test['mse'], epoch)
     writer.add_scalar('test/r2', eval_test['r2'], epoch)
     writer.add_scalar('test/rmse', -eval_test['score'], epoch)
+    writer.add_scalar('test/mde', eval_test['mde'], epoch)
     # 记录训练集的 MSE 和 R²
     writer.add_scalar('train/mse', eval_train['mse'], epoch)
     writer.add_scalar('train/r2', eval_train['r2'], epoch)
     writer.add_scalar('train/rmse', -eval_train['score'], epoch)
+    writer.add_scalar('train/mde', eval_train['mde'], epoch)
     # log learning rate (first param group)
     try:
         lr = optimizer.param_groups[0]['lr']
@@ -326,8 +328,8 @@ for epoch in range(n_epochs):
     print(
         f'{mark} [Epoch {epoch:03d}] '
         f'Train MSE: {eval_train["mse"]:.4f} | R2: {eval_train["r2"]:.4f}  '
-        f'Val MSE: {eval_val["mse"]:.4f} | R2: {eval_val["r2"]:.4f}  '
-        f'Test MSE: {eval_test["mse"]:.4f} | R2: {eval_test["r2"]:.4f}'
+        f'Val MSE: {eval_val["mse"]:.4f} | R2: {eval_val["r2"]:.4f} | MDE: {eval_val["mde"]:.4f}  '
+        f'Test MSE: {eval_test["mse"]:.4f} | R2: {eval_test["r2"]:.4f} | MDE: {eval_test["mde"]:.4f}'
     )
 
     if remaining_patience < 0:
@@ -343,6 +345,7 @@ print('='*40)
 print(f'MSE : {final_res["mse"]:.6f}')
 print(f'R²  : {final_res["r2"]:.6f}')
 print(f'RMSE: {(-final_res["score"]):.6f}')
+print(f'MDE : {final_res["mde"]:.6f}')
 
 torch.save(
     {

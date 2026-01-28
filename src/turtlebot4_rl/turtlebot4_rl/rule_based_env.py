@@ -12,7 +12,7 @@ class RuleBasedSubgoalGenerator:
     def __init__(
         self,
         lidar_size: int = 640,
-        max_range: float = 6.0,
+        max_range: float = 15.0,
         debug: bool = False,
         *,
         gap_diff_threshold: float = 0.25,
@@ -22,6 +22,8 @@ class RuleBasedSubgoalGenerator:
         gap_candidate_scale: float = 0.90,
         safety_margin: float = 0.10,
         max_range_epsilon: float = 1e-3,
+        enable_segment_check: bool = True,
+        segment_check_step: float = 0.2,
     ):
         self.lidar_size = int(lidar_size)
         self.max_range = float(max_range)
@@ -33,6 +35,38 @@ class RuleBasedSubgoalGenerator:
         self.gap_candidate_scale = float(gap_candidate_scale)
         self.safety_margin = float(safety_margin)
         self.max_range_epsilon = float(max_range_epsilon)
+        self.enable_segment_check = bool(enable_segment_check)
+        self.segment_check_step = float(segment_check_step)
+
+    def _is_segment_collision_free(self, x0: float, y0: float, x1: float, y1: float, *, bounds: Optional[dict]) -> bool:
+        """Return True if the straight segment from (x0,y0) to (x1,y1) stays valid.
+
+        Implementation: sample points along the segment and require every sample to be
+        `is_position_valid`. This prevents choosing a subgoal whose endpoint is valid
+        but the line-of-sight crosses an obstacle.
+        """
+        from turtlebot4_rl.collision import is_position_valid
+
+        step = float(self.segment_check_step)
+        if step <= 0.0:
+            step = 0.05
+
+        dx = float(x1) - float(x0)
+        dy = float(y1) - float(y0)
+        dist = float(np.hypot(dx, dy))
+        if dist <= 1e-9:
+            return bool(is_position_valid(float(x1), float(y1), bounds=bounds))
+
+        # Include both ends; skip the very first sample (robot pose) since it's assumed valid.
+        n = int(np.ceil(dist / step)) + 1
+        n = max(n, 2)
+        ts = np.linspace(0.0, 1.0, num=n, dtype=np.float32)
+        for t in ts[1:]:
+            x = float(x0 + dx * float(t))
+            y = float(y0 + dy * float(t))
+            if not bool(is_position_valid(x, y, bounds=bounds)):
+                return False
+        return True
 
     def _beam_deg(self, beam_index: float) -> float:
         # Map beam index -> angle in degrees.
@@ -134,8 +168,8 @@ class RuleBasedSubgoalGenerator:
 
         规则（按你的需求实现）：
         - 仅判断传入的 640 维激光值
-                - 如果存在一段“连续 >20 束”的激光值都 > 1.2m，则：
-                    仅沿这些满足条件的激光束方向，在 1.2m 处放置候选点
+                - 如果存在一段“连续 >20 束”的激光值都 > 3.0m，则：
+                    仅沿这些满足条件的激光束方向，在 3.0m 处放置候选点
         - 候选点评分 = 候选点与全局目标的欧氏距离；选取最小者
         - 若不满足连续区间条件，返回 None
         """
@@ -148,15 +182,15 @@ class RuleBasedSubgoalGenerator:
         lidar = np.nan_to_num(lidar, nan=self.max_range, posinf=self.max_range, neginf=0.0)
         lidar = np.clip(lidar, 0.0, self.max_range)
 
-        # Condition: exists a consecutive run longer than the given beam count with range > 1.2m.
+        # Condition: exists a consecutive run longer than the given beam count with range > 3.0m.
         # “连续大于20束” -> min_run_len = 21.
-        threshold = 1.2
+        threshold = 3.0
         min_run_len = 21
         qualifying_idx = self._qualifying_clear_beam_indices(lidar, threshold=threshold, min_run_len=min_run_len)
         if qualifying_idx.size == 0:
             return None
 
-        # Generate candidates only along those qualifying beam directions, at exactly 1.2m.
+        # Generate candidates only along those qualifying beam directions, at exactly 3.0m.
         # Prefer LaserScan angle_min/angle_increment (radians) when provided; otherwise
         # fall back to assuming a uniform [-180, 180] deg mapping.
         candidate_dist = float(min(threshold, self.max_range))
@@ -183,22 +217,34 @@ class RuleBasedSubgoalGenerator:
         # Filter invalid candidates: invalid points do not participate in scoring.
         from turtlebot4_rl.collision import is_position_valid
 
-        valid_mask = np.zeros((nodes.shape[0],), dtype=bool)
+        candidate_indices = []
         for i in range(nodes.shape[0]):
             x_i = float(nodes[i, 0])
             y_i = float(nodes[i, 1])
-            valid_mask[i] = bool(is_position_valid(x_i, y_i, bounds=bounds))
+            if bool(is_position_valid(x_i, y_i, bounds=bounds)):
+                candidate_indices.append(i)
 
-        if not np.any(valid_mask):
+        if not candidate_indices:
             return None
 
-        valid_nodes = nodes[valid_mask]
-
-        # Score = distance to global goal; pick min among valid nodes.
+        # Score = distance to global goal; evaluate in increasing score order.
+        # This allows us to do expensive segment checks only for the best candidates.
         goalX_f = float(goalX)
         goalY_f = float(goalY)
-        dx = goalX_f - valid_nodes[:, 0].astype(np.float64)
-        dy = goalY_f - valid_nodes[:, 1].astype(np.float64)
+        cand = nodes[np.asarray(candidate_indices, dtype=np.int32)]
+        dx = goalX_f - cand[:, 0].astype(np.float64)
+        dy = goalY_f - cand[:, 1].astype(np.float64)
         scores = np.hypot(dx, dy)
-        idx = int(np.argmin(scores))
-        return valid_nodes[idx]
+        order = np.argsort(scores)
+
+        odomX_f = float(odomX)
+        odomY_f = float(odomY)
+        for k in order.tolist():
+            x_sg = float(cand[k, 0])
+            y_sg = float(cand[k, 1])
+            if self.enable_segment_check:
+                if not self._is_segment_collision_free(odomX_f, odomY_f, x_sg, y_sg, bounds=bounds):
+                    continue
+            return np.asarray([x_sg, y_sg], dtype=np.float32)
+
+        return None

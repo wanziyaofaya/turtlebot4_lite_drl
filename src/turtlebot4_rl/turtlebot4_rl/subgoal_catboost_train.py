@@ -1,7 +1,7 @@
 import os
 import random
 from datetime import datetime
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -22,7 +22,7 @@ set_seed(42)
 TaskType = Literal['regression', 'binclass', 'multiclass']
 task_type: TaskType = 'regression'
 
-file_path = 'models/subgoal_dataset.txt'
+file_path = 'models/subgoal_dataset_6.txt'
 target_cols = ['subgoal_x', 'subgoal_y']
 
 if os.path.exists(file_path):
@@ -94,13 +94,15 @@ run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 writer = SummaryWriter(log_dir=f'runs/catboost_{run_timestamp}')
 
 # CatBoost 参数
+# 说明：使用 MultiRMSE 直接做 2D 回归（subgoal_x, subgoal_y），这样可以天然得到
+# 与 TabM / XGBoost 一致的整体 train/val 曲线（同一套 tag 便于对比）。
 catboost_params = {
-    'iterations': 500,
+    'iterations': 580,
     'depth': 8,
     'learning_rate': 0.05,
     'l2_leaf_reg': 3.0,
     'random_seed': 42,
-    'loss_function': 'RMSE',
+    'loss_function': 'MultiRMSE',
     'early_stopping_rounds': 50,
     'verbose': 100,
     'task_type': 'GPU' if os.environ.get('USE_GPU', '0') == '1' else 'CPU',
@@ -109,55 +111,94 @@ catboost_params = {
 # 准备验证集
 Y_val_normalized = (data_numpy['val']['y'] - regression_label_stats.mean) / regression_label_stats.std
 
-def evaluate(part: str, models_list: list) -> dict:
-    """评估模型性能"""
-    y_pred_normalized = np.column_stack([m.predict(data_numpy[part]['x_num']) for m in models_list])
+def evaluate(part: str, model: CatBoostRegressor, ntree_end: Optional[int] = None) -> dict:
+    """评估模型性能（与 TabM/XGBoost 对齐：mse/rmse/r2/mde）"""
+    if ntree_end is None:
+        y_pred_normalized = model.predict(data_numpy[part]['x_num'])
+    else:
+        y_pred_normalized = model.predict(data_numpy[part]['x_num'], ntree_end=int(ntree_end))
+    y_pred_normalized = np.asarray(y_pred_normalized, dtype=np.float32)
+    if y_pred_normalized.ndim == 1:
+        y_pred_normalized = y_pred_normalized[:, None]
+
     y_pred = y_pred_normalized * regression_label_stats.std + regression_label_stats.mean
     y_true = data_numpy[part]['y']
-    
+
+    mde = float(np.mean(np.linalg.norm(y_pred - y_true, axis=1)))
     mse = sklearn.metrics.mean_squared_error(y_true, y_pred)
     r2 = sklearn.metrics.r2_score(y_true, y_pred)
     rmse = mse ** 0.5
-    return {'mse': mse, 'r2': r2, 'rmse': rmse}
+    return {'mse': mse, 'r2': r2, 'rmse': rmse, 'mde': mde}
 
-# 为每个输出目标训练独立的模型
-models = []
-for i in range(n_outputs):
-    print(f"\nTraining model for target {i+1}/{n_outputs}...")
-    model_i = CatBoostRegressor(**catboost_params)
-    
-    train_pool = Pool(data_numpy['train']['x_num'], Y_train_normalized[:, i])
-    val_pool = Pool(data_numpy['val']['x_num'], Y_val_normalized[:, i])
-    
-    model_i.fit(train_pool, eval_set=val_pool)
-    models.append(model_i)
-    
-    # 记录每个目标模型的训练历史到 TensorBoard
-    evals_result = model_i.get_evals_result()
-    if 'validation' in evals_result and 'RMSE' in evals_result['validation']:
-        for epoch, rmse_val in enumerate(evals_result['validation']['RMSE']):
-            writer.add_scalar(f'target_{i}/val_rmse', rmse_val, epoch)
-    
-    # 每个目标模型训练完后记录当前整体指标
-    eval_train_i = evaluate('train', models)
-    eval_val_i = evaluate('val', models)
-    eval_test_i = evaluate('test', models)
-    
-    writer.add_scalar(f'overall/train_mse_after_target_{i}', eval_train_i['mse'], i)
-    writer.add_scalar(f'overall/val_mse_after_target_{i}', eval_val_i['mse'], i)
-    writer.add_scalar(f'overall/test_mse_after_target_{i}', eval_test_i['mse'], i)
+
+# 训练：2D 联合回归
+print("\nTraining model for 2D target (subgoal_x, subgoal_y)...")
+model = CatBoostRegressor(**catboost_params)
+train_pool = Pool(data_numpy['train']['x_num'], Y_train_normalized)
+val_pool = Pool(data_numpy['val']['x_num'], Y_val_normalized)
+model.fit(train_pool, eval_set=val_pool)
+
+# 写入 RMSE 曲线（每一次 boosting iteration 都有）
+evals_result = model.get_evals_result() or {}
+train_curve = None
+val_curve = None
+if 'learn' in evals_result and 'MultiRMSE' in evals_result['learn']:
+    train_curve = evals_result['learn']['MultiRMSE']
+if 'validation' in evals_result and 'MultiRMSE' in evals_result['validation']:
+    val_curve = evals_result['validation']['MultiRMSE']
+
+if train_curve is not None:
+    for step, rmse_train in enumerate(train_curve):
+        writer.add_scalar('train/rmse', rmse_train, step)
+        writer.add_scalar('train/mse', float(rmse_train) ** 2, step)
+if val_curve is not None:
+    for step, rmse_val in enumerate(val_curve):
+        writer.add_scalar('val/rmse', rmse_val, step)
+        writer.add_scalar('val/mse', float(rmse_val) ** 2, step)
+
+# 周期性计算更“语义化”的指标（r2/mde），让三种算法的同名曲线可以对齐对比。
+# 注意：这会额外做 predict，数据量很大时可适当调大间隔。
+metric_eval_every = int(os.environ.get('CATBOOST_METRIC_EVERY', '10'))
+if metric_eval_every > 0 and val_curve is not None:
+    for step in range(0, len(val_curve), metric_eval_every):
+        res_train = evaluate('train', model, ntree_end=step + 1)
+        res_val = evaluate('val', model, ntree_end=step + 1)
+        res_test = evaluate('test', model, ntree_end=step + 1)
+        writer.add_scalar('train/r2', res_train['r2'], step)
+        writer.add_scalar('train/mde', res_train['mde'], step)
+        writer.add_scalar('train/mse', res_train['mse'], step)
+        writer.add_scalar('train/rmse', res_train['rmse'], step)
+        writer.add_scalar('val/r2', res_val['r2'], step)
+        writer.add_scalar('val/mde', res_val['mde'], step)
+        writer.add_scalar('val/mse', res_val['mse'], step)
+        writer.add_scalar('val/rmse', res_val['rmse'], step)
+
+        # 注意：test 曲线会让你在训练过程中“看到”测试集表现，严格来说属于信息泄露。
+        # 如果你只做实验对比/可视化可以接受；正式调参建议只保留最终 test 点。
+        writer.add_scalar('test/r2', res_test['r2'], step)
+        writer.add_scalar('test/mde', res_test['mde'], step)
+        writer.add_scalar('test/mse', res_test['mse'], step)
+        writer.add_scalar('test/rmse', res_test['rmse'], step)
 
 # 最终评估
-eval_train = evaluate('train', models)
-eval_val = evaluate('val', models)
-eval_test = evaluate('test', models)
+eval_train = evaluate('train', model)
+eval_val = evaluate('val', model)
+eval_test = evaluate('test', model)
 
 print('\n' + '='*40)
 print('CatBoost RESULTS')
 print('='*40)
-print(f'Train - MSE: {eval_train["mse"]:.6f} | R²: {eval_train["r2"]:.6f} | RMSE: {eval_train["rmse"]:.6f}')
-print(f'Val   - MSE: {eval_val["mse"]:.6f} | R²: {eval_val["r2"]:.6f} | RMSE: {eval_val["rmse"]:.6f}')
-print(f'Test  - MSE: {eval_test["mse"]:.6f} | R²: {eval_test["r2"]:.6f} | RMSE: {eval_test["rmse"]:.6f}')
+print(f'Train - MSE: {eval_train["mse"]:.6f} | R²: {eval_train["r2"]:.6f} | RMSE: {eval_train["rmse"]:.6f} | MDE: {eval_train["mde"]:.6f}')
+print(f'Val   - MSE: {eval_val["mse"]:.6f} | R²: {eval_val["r2"]:.6f} | RMSE: {eval_val["rmse"]:.6f} | MDE: {eval_val["mde"]:.6f}')
+print(f'Test  - MSE: {eval_test["mse"]:.6f} | R²: {eval_test["r2"]:.6f} | RMSE: {eval_test["rmse"]:.6f} | MDE: {eval_test["mde"]:.6f}')
+
+# 将最终 test 指标也放到统一的 tag 下（test 曲线通常只有 1 个点）
+final_step = len(val_curve) - 1 if val_curve is not None and len(val_curve) > 0 else 0
+for part, res in [('train', eval_train), ('val', eval_val), ('test', eval_test)]:
+    writer.add_scalar(f'{part}/mse', res['mse'], final_step)
+    writer.add_scalar(f'{part}/rmse', res['rmse'], final_step)
+    writer.add_scalar(f'{part}/r2', res['r2'], final_step)
+    writer.add_scalar(f'{part}/mde', res['mde'], final_step)
 
 # 保存模型
 model_save_dir = 'models'
@@ -166,12 +207,15 @@ model_save_path = os.path.join(model_save_dir, f'subgoal_catboost_{run_timestamp
 
 joblib.dump(
     {
-        'models': models,
+        'model': model,
+        # 兼容旧字段名：如果你后面有代码期望读取 'models'，也能继续工作
+        'models': [model],
         'preprocessing': preprocessing,
         'regression_label_stats': regression_label_stats,
         'task_type': task_type,
         'timestamp': run_timestamp,
         'metrics': {'train': eval_train, 'val': eval_val, 'test': eval_test},
+        'catboost_params': catboost_params,
     },
     model_save_path,
 )
@@ -181,9 +225,20 @@ print(f'\nModel saved to {model_save_path}')
 writer.add_hparams(
     {'model': 'CatBoost', 'iterations': catboost_params['iterations'], 
      'depth': catboost_params['depth'], 'learning_rate': catboost_params['learning_rate']},
-    {'final/train_mse': eval_train['mse'], 'final/train_r2': eval_train['r2'], 'final/train_rmse': eval_train['rmse'],
-     'final/val_mse': eval_val['mse'], 'final/val_r2': eval_val['r2'], 'final/val_rmse': eval_val['rmse'],
-     'final/test_mse': eval_test['mse'], 'final/test_r2': eval_test['r2'], 'final/test_rmse': eval_test['rmse']}
+    {
+        'final/train_mse': eval_train['mse'],
+        'final/train_r2': eval_train['r2'],
+        'final/train_rmse': eval_train['rmse'],
+        'final/train_mde': eval_train['mde'],
+        'final/val_mse': eval_val['mse'],
+        'final/val_r2': eval_val['r2'],
+        'final/val_rmse': eval_val['rmse'],
+        'final/val_mde': eval_val['mde'],
+        'final/test_mse': eval_test['mse'],
+        'final/test_r2': eval_test['r2'],
+        'final/test_rmse': eval_test['rmse'],
+        'final/test_mde': eval_test['mde'],
+    }
 )
 
 writer.close()
