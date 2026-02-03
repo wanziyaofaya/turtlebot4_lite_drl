@@ -24,15 +24,15 @@ class RegressionLabelStats(NamedTuple):
     std: np.ndarray
 
 # Constants
-GOAL_REACH_THRESHOLD = 0.2  # 全局目标到达阈值（米）
+GOAL_REACH_THRESHOLD = 0.1  # 全局目标到达阈值（米）
 SUBGOAL_SWITCH_THRESHOLD = 0.2  # 子目标切换阈值（米）- 接近子目标时静默切换
-SUBGOAL_STOP_GENERATION_DISTANCE = 1.5  # 当机器人距全局终点小于该值时，不再生成新的子目标，直接追踪全局终点
-SUBGOAL_CLOSE_TO_GOAL_THRESHOLD = 0.5  # 若预测子目标距全局终点小于该值，则直接使用全局终点
-SUBGOAL_MAX_DISTANCE = 2.5  # 若预测子目标距离当前位置过远，则沿方向截断到该距离
+SUBGOAL_STOP_GENERATION_DISTANCE = 0.75  # 当机器人距全局终点小于该值时，不再生成新的子目标，直接追踪全局终点
+SUBGOAL_CLOSE_TO_GOAL_THRESHOLD = 0.3  # 若预测子目标距全局终点小于该值，则直接使用全局终点
+SUBGOAL_MAX_DISTANCE = 2  # 若预测子目标距离当前位置过远，则沿方向截断到该距离
 SUBGOAL_VALID_BACKOFF_STEP = 0.05  # 子目标不合法时，沿方向回退搜索的步长（米）
 
 class TurtleBotNavEnv(gym.Env):
-    def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=7.0, positions_file=None, subgoal_model_path=None):
+    def __init__(self, max_wait_for_observation=5.0, map_bounds=None, min_distance=4.0, positions_file=None, subgoal_model_path=None):
         super().__init__()
 
         if not rclpy.ok():
@@ -44,12 +44,12 @@ class TurtleBotNavEnv(gym.Env):
         # self.map_bounds = map_bounds if map_bounds is not None else {
         #     'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2
         # }
-        # self.map_bounds = map_bounds if map_bounds is not None else {
-        #      'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3
-        #   }
         self.map_bounds = map_bounds if map_bounds is not None else {
-            'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5
-        }
+             'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3
+          }
+        # self.map_bounds = map_bounds if map_bounds is not None else {
+        #     'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5
+        # }
         self.min_distance = min_distance  # 起点和目标之间的最小距离
         
         # Placeholder values - will be set by reset() before first use
@@ -60,10 +60,10 @@ class TurtleBotNavEnv(gym.Env):
         self.position_index = 0
         if positions_file is None:
             # 优先尝试当前工作目录下的文件
-            if os.path.exists('positions_10.json'):
-                positions_file = os.path.abspath('positions_10.json')
+            if os.path.exists('positions_6.json'):
+                positions_file = os.path.abspath('positions_6.json')
             else:
-                positions_file = '/home/wanzi/turtlebot4_lite_drl/positions_10.json'
+                positions_file = '/home/wanzi/turtlebot4_lite_drl/positions_6.json'
         
         try:
             import json
@@ -82,8 +82,8 @@ class TurtleBotNavEnv(gym.Env):
         self.MAX_ANGULAR_VEL = 1.9
         
         # LiDAR & Goal configuration
-        self.LIDAR_MAX_RANGE = 15.0  # Maximum LiDAR range in meters
-        self.MAX_GOAL_DIST = 15.0  # Maximum distance for goal normalization
+        self.LIDAR_MAX_RANGE = 9.0  # Maximum LiDAR range in meters
+        self.MAX_GOAL_DIST = 9.0  # Maximum distance for goal normalization
 
         # Define action spaces in normalized range [-1, 1]
         # action[0]: normalized linear command, action[1]: normalized angular command
@@ -698,7 +698,7 @@ class TurtleBotNavEnv(gym.Env):
                 distance_reward = distance_improvement
 
             # === 步数惩罚 ===
-            step_penalty = 0.1
+            step_penalty = 0.25
 
             # === 计算总奖励 ===
             total_reward = 100 * distance_reward - step_penalty

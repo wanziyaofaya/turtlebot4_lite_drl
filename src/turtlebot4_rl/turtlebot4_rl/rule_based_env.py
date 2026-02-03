@@ -12,7 +12,7 @@ class RuleBasedSubgoalGenerator:
     def __init__(
         self,
         lidar_size: int = 640,
-        max_range: float = 15.0,
+        max_range: float = 9.0,
         debug: bool = False,
         *,
         gap_diff_threshold: float = 0.25,

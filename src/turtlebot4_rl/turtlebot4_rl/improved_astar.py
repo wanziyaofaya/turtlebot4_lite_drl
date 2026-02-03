@@ -32,7 +32,7 @@ def remove_redundant_nodes(path):
             simplified_path.append(path[-1])  # 保留终点
             return simplified_path
 
-def astar(start, goal, resolution=0.01, env=None):
+def astar(start, goal, resolution=0.1, env=None):
     if env is None or env.lidar_data is None:
         raise ValueError("Environment with valid LiDAR data is required to calculate obstacle density.")
 
