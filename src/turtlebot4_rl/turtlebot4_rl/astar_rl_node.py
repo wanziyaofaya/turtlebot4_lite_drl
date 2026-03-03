@@ -22,7 +22,7 @@ class RegressionLabelStats(NamedTuple):
 class TurtleBotRLNode(Node):
     """ROS2节点：可训练或仅评估强化学习模型。"""
 
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=4, eval_only=False, eval_start_index=None):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=7, eval_only=False, eval_start_index=None):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -31,12 +31,12 @@ class TurtleBotRLNode(Node):
         self.model_path = model_path
         self.min_distance = min_distance
         self.eval_only = eval_only  # 若为True，只进行评估不训练
-        self.eval_start_index = eval_start_index  # 评估时起始 positions 索引（仅在使用 positions_6.json 时生效）
+        self.eval_start_index = eval_start_index  # 评估时起始 positions 索引（仅在使用 positions_10.json 时生效）
 
         # Map boundaries (based on the warehouse map)
         # self.map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
-        self.map_bounds = {'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3}
-        # self.map_bounds = {'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5}
+        # self.map_bounds = {'x_min': -3, 'x_max': 3, 'y_min': -3, 'y_max': 3}
+        self.map_bounds = {'x_min': -5, 'x_max': 5, 'y_min': -5, 'y_max': 5}
 
         self.model_dir = os.path.join('models', self.algorithm)
         os.makedirs(self.model_dir, exist_ok=True)
@@ -148,7 +148,7 @@ class TurtleBotRLNode(Node):
                 else:
                     self.get_logger().warning(f"指定的 eval_start_index={self.eval_start_index} 越界（0~{len(self.env.positions)-1}），忽略该设置。")
             else:
-                self.get_logger().warning("环境未加载 positions_6.json，eval_start_index 设置被忽略，将使用随机起终点。")
+                self.get_logger().warning("环境未加载 positions_10.json，eval_start_index 设置被忽略，将使用随机起终点。")
         success_count = 0 
         for episode in range(1, self.episodes + 1):
             obs, _ = self.env.reset()
@@ -213,9 +213,9 @@ def main(args=None):
     arg_parser.add_argument('--timesteps', type=int, default=10000, help='Base timesteps per unit (total = timesteps × episodes)')
     arg_parser.add_argument('--episodes', type=int, default=10, help='Multiplier for total timesteps (total = timesteps × episodes)')
     arg_parser.add_argument('--model_path', type=str, default=None, help='Path to a pre-trained model zip file to load and build upon')
-    arg_parser.add_argument('--min_distance', type=float, default=4.0, help='Minimum distance between start and goal positions')
+    arg_parser.add_argument('--min_distance', type=float, default=7.0, help='Minimum distance between start and goal positions')
     arg_parser.add_argument('--eval_only', action='store_true', help='If set, skip training and only evaluate the provided model_path')
-    arg_parser.add_argument('--eval_start_index', type=int, default=None, help='Evaluation start index in positions_6.json (e.g., 3)')
+    arg_parser.add_argument('--eval_start_index', type=int, default=None, help='Evaluation start index in positions_10.json (e.g., 3)')
 
     parsed = arg_parser.parse_args(args=args)
 

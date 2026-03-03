@@ -55,4 +55,5 @@ python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --timesteps 5000 --episodes 2
 python3 src/turtlebot4_rl/turtlebot4_rl/astar_rl_node.py --timesteps 5000 --episodes 2000 --algorithm SAC
 python3 src/turtlebot4_rl/turtlebot4_rl/rl_node_rule_based.py --timesteps 5000 --episodes 2000 --algorithm SAC
 tensorboard --logdir tensorboard_logs
+python3 src/turtlebot4_rl/turtlebot4_rl/rl_node.py --algorithm SAC --model_path models/SAC/SAC_20260122_193153_FINAL_10000000steps.zip --eval_only --episodes 10
 ```
