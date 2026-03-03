@@ -22,7 +22,7 @@ set_seed(42)
 TaskType = Literal['regression', 'binclass', 'multiclass']
 task_type: TaskType = 'regression'
 
-file_path = 'models/subgoal_dataset_6.txt'
+file_path = 'models/subgoal_dataset_10.txt'
 target_cols = ['subgoal_x', 'subgoal_y']
 
 if os.path.exists(file_path):
@@ -97,7 +97,7 @@ writer = SummaryWriter(log_dir=f'runs/catboost_{run_timestamp}')
 # 说明：使用 MultiRMSE 直接做 2D 回归（subgoal_x, subgoal_y），这样可以天然得到
 # 与 TabM / XGBoost 一致的整体 train/val 曲线（同一套 tag 便于对比）。
 catboost_params = {
-    'iterations': 580,
+    'iterations': 180,
     'depth': 8,
     'learning_rate': 0.05,
     'l2_leaf_reg': 3.0,
