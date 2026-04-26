@@ -22,7 +22,7 @@ class RegressionLabelStats(NamedTuple):
 class TurtleBotRLNode(Node):
     """ROS2节点：可训练或仅评估强化学习模型。"""
 
-    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=7, eval_only=False, eval_start_index=None):
+    def __init__(self, algorithm='PPO', timesteps=10000, episodes=10, model_path=None, min_distance=7, eval_only=False, eval_start_index=None, seed=42):
         super().__init__('turtlebot_rl_node')
 
         self.algorithm = algorithm.upper()
@@ -32,6 +32,17 @@ class TurtleBotRLNode(Node):
         self.min_distance = min_distance
         self.eval_only = eval_only  # 若为True，只进行评估不训练
         self.eval_start_index = eval_start_index  # 评估时起始 positions 索引
+        self.seed = seed
+
+        # Set random seeds for reproducibility
+        import random
+        random.seed(self.seed)
+        np.random.seed(self.seed)
+        torch.manual_seed(self.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(self.seed)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
 
         # Map boundaries (based on the warehouse map)
         # self.map_bounds = {'x_min': -2, 'x_max': 2, 'y_min': -2, 'y_max': 2}
@@ -91,6 +102,7 @@ class TurtleBotRLNode(Node):
                     self.env, 
                     verbose=1,
                     device='cpu',
+                    seed=self.seed,
                     tensorboard_log=self.tensorboard_log,
                     learning_rate=1e-4,  
                     n_steps=2048,  
@@ -118,6 +130,7 @@ class TurtleBotRLNode(Node):
                     self.env,
                     verbose=1,
                     device='cpu',
+                    seed=self.seed,
                     tensorboard_log=self.tensorboard_log,
                     learning_rate=1e-4,
                     buffer_size=1000_000,
@@ -135,7 +148,7 @@ class TurtleBotRLNode(Node):
                     )
                 )
             else:
-                model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1, device='cpu', tensorboard_log=self.tensorboard_log)
+                model = algorithms[algorithm_name]("MlpPolicy", self.env, verbose=1, device='cpu', seed=self.seed, tensorboard_log=self.tensorboard_log)
         return model
 
     def evaluate_model(self, deterministic: bool = True):
@@ -218,6 +231,7 @@ def main(args=None):
     arg_parser.add_argument('--min_distance', type=float, default=4, help='Minimum distance between start and goal positions')
     arg_parser.add_argument('--eval_only', action='store_true', help='If set, skip training and only evaluate the provided model_path')
     arg_parser.add_argument('--eval_start_index', type=int, default=None, help='Evaluation start index in positions_6.json (e.g., 3000)')
+    arg_parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
 
     parsed = arg_parser.parse_args(args=args)
 
@@ -231,7 +245,8 @@ def main(args=None):
             model_path=parsed.model_path,
             min_distance=parsed.min_distance,
             eval_only=parsed.eval_only,
-            eval_start_index=parsed.eval_start_index
+            eval_start_index=parsed.eval_start_index,
+            seed=parsed.seed
         )
         node.train_and_evaluate()
         node.close()

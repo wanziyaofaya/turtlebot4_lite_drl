@@ -7,11 +7,9 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
-import rtdl_num_embeddings
 import sklearn.metrics
 import sklearn.model_selection
 import sklearn.preprocessing
-import tabm
 import torch
 import torch.nn as nn
 import torch.optim
@@ -21,25 +19,20 @@ from torch.utils.tensorboard import SummaryWriter
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
-    # CPU 版 PyTorch 随机种子
     torch.manual_seed(seed)
-    # GPU 版 PyTorch 随机种子
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed) # 如果使用多GPU
+        torch.cuda.manual_seed_all(seed)
     
     os.environ['PYTHONHASHSEED'] = str(seed)
     
-    # 强制 cuDNN 使用确定性算法
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-# 统一维护想要测试的多个 seed
 SEEDS = [42, 100, 2026] 
 
 TaskType = Literal['regression', 'binclass', 'multiclass']
 task_type: TaskType = 'regression'
-n_classes = None
 
 file_path = 'models/subgoal_dataset_4.txt'
 target_cols = ['subgoal_x', 'subgoal_y']
@@ -56,14 +49,10 @@ else:
     X_num = np.random.randn(100, 5).astype(np.float32)
     Y = np.random.randn(100, 2).astype(np.float32)
 
-task_is_regression = task_type == 'regression'
 n_num_features = X_num.shape[1]
 n_outputs = Y.shape[1]
 
 print(f"Input Features: {n_num_features}, Output Targets: {n_outputs}")
-
-cat_cardinalities = []
-X_cat = None
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 amp_dtype = (
@@ -81,12 +70,30 @@ class RegressionLabelStats(NamedTuple):
     mean: np.ndarray
     std: np.ndarray
 
+class LSTMModel(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, output_size, dropout=0.1):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        # input shape: (batch_size, sequence_length, input_size) if batch_first=True
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, 
+                            batch_first=True, dropout=dropout if num_layers > 1 else 0.0)
+        self.fc = nn.Linear(hidden_size, output_size)
+        
+    def forward(self, x):
+        # 如果传入的是 (batch_size, input_size)，增加一个 seq_len=1 维度 -> (batch_size, 1, input_size)
+        if x.dim() == 2:
+            x = x.unsqueeze(1)
+        out, _ = self.lstm(x)
+        # 取最后一个时间步作为输出
+        out = out[:, -1, :]
+        return self.fc(out)
+
 all_idx = np.arange(len(Y))
 run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-# ======= 开始不同 Seed 的循环 =======
 final_metrics_list = []
 
+# ======= 开始不同 Seed 的循环 =======
 for seed in SEEDS:
     print(f"\n{'='*60}")
     print(f'Starting Training for SEED: {seed}')
@@ -109,7 +116,7 @@ for seed in SEEDS:
 
     x_num_train_numpy = data_numpy['train']['x_num']
     noise = (
-        np.random.default_rng(seed) # 保证这里跟随 seed 产生噪声
+        np.random.default_rng(seed)
         .normal(0.0, 1e-5, x_num_train_numpy.shape)
         .astype(x_num_train_numpy.dtype)
     )
@@ -117,7 +124,7 @@ for seed in SEEDS:
         n_quantiles=max(min(len(train_idx) // 30, 1000), 10),
         output_distribution='normal',
         subsample=10**9,
-        random_state=seed, # 使用对应的 random_state
+        random_state=seed, 
     ).fit(x_num_train_numpy + noise)
     
     for part in data_numpy:
@@ -146,50 +153,27 @@ for seed in SEEDS:
 
     grad_scaler = torch.cuda.amp.GradScaler() if amp_dtype is torch.float16 else None
 
-    bins = rtdl_num_embeddings.compute_bins(data['train']['x_num'], n_bins=512)
-    num_embeddings = rtdl_num_embeddings.PiecewiseLinearEmbeddings(
-        bins, # 将每个特征划分为512个区间
-        d_embedding=32, # 每个特征映射到32维空间
-        activation=False,
-        version='B',
-    )
-
-    model = tabm.TabM.make(
-        n_num_features=n_num_features,
-        cat_cardinalities=cat_cardinalities,
-        d_out=n_outputs,
-        num_embeddings=num_embeddings,
-        n_blocks=3, # 模型中残差块的数量
-        d_block=640, # 每个块中隐藏层的维度（即神经元的数量）
-        dropout=0.0,
-        k=8,
+    # 初始化 LSTM 模型
+    model = LSTMModel(
+        input_size=n_num_features, 
+        hidden_size=256, 
+        num_layers=2, 
+        output_size=n_outputs, 
+        dropout=0.1
     ).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=5e-5)
     gradient_clipping_norm: Optional[float] = 0.8
-    share_training_batches = True
 
     @torch.autocast(device.type, enabled=amp_enabled, dtype=amp_dtype)
     def apply_model(part: str, idx: Tensor) -> Tensor:
-        out = model(
-            data[part]['x_num'][idx],
-            data[part]['x_cat'][idx] if 'x_cat' in data[part] else None,
-        )
+        out = model(data[part]['x_num'][idx])
         if n_outputs == 1:
             out = out.squeeze(-1)
         return out.float()
 
-    base_loss_fn = lambda y_pred, y_true: nn.functional.huber_loss(
-        y_pred, y_true, delta=1.0
-    )
-
     def loss_fn(y_pred: Tensor, y_true: Tensor) -> Tensor:
-        y_pred = y_pred.flatten(0, 1)
-        if share_training_batches:
-            y_true = y_true.repeat_interleave(model.backbone.k, dim=0)
-        else:
-            y_true = y_true.flatten(0, 1)
-        return base_loss_fn(y_pred, y_true)
+        return nn.functional.huber_loss(y_pred, y_true, delta=1.0)
 
     @torch.no_grad()
     def evaluate(part: str) -> dict:
@@ -206,12 +190,9 @@ for seed in SEEDS:
         if regression_label_stats is not None:
             y_pred = y_pred * regression_label_stats.std + regression_label_stats.mean
 
-        y_pred = y_pred.mean(axis=1)
         y_true = data[part]['y'].cpu().numpy()
 
-        # Mean Distance Error (MDE): 2D 目标点 (x, y) 的欧氏距离均值
         mde = float(np.mean(np.linalg.norm(y_pred - y_true, axis=1)))
-
         mse = sklearn.metrics.mean_squared_error(y_true, y_pred)
         r2 = sklearn.metrics.r2_score(y_true, y_pred)
         score = -(mse ** 0.5)
@@ -222,7 +203,6 @@ for seed in SEEDS:
     train_size = len(train_idx)
     batch_size = 256
 
-    # 余弦退火 + 线性 warmup 调度
     warmup_epochs = min(10, max(1, n_epochs // 5))
     _denom = max(1, n_epochs - warmup_epochs)
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -232,12 +212,11 @@ for seed in SEEDS:
         else 0.5 * (1 + math.cos(math.pi * (epoch - warmup_epochs) / _denom)),
     )
 
-    # TensorBoard writer - 将 log 文件夹层级设置为 runs/<同一批实验名称>/<每次seed>
-    writer_path = f'runs/tabm_multi_seed_{run_timestamp}/seed_{seed}'
+    writer_path = f'runs/lstm_multi_seed_{run_timestamp}/seed_{seed}'
     writer = SummaryWriter(log_dir=writer_path)
     model_save_dir = 'models'
     os.makedirs(model_save_dir, exist_ok=True)
-    model_save_path = os.path.join(model_save_dir, f'subgoal_tabm_{run_timestamp}_seed{seed}.pt')
+    model_save_path = os.path.join(model_save_dir, f'subgoal_lstm_{run_timestamp}_seed{seed}.pt')
 
     metrics = {'val': {'score': -math.inf}, 'test': {'score': -math.inf}}
 
@@ -252,16 +231,9 @@ for seed in SEEDS:
     patience = 40
     remaining_patience = patience
 
-    print(f"Start Training ...")
+    print("Start Training ...")
     for epoch in range(n_epochs):
-        if share_training_batches:
-            batches = torch.randperm(train_size, device=device).split(batch_size)
-        else:
-            batches = (
-                torch.rand((train_size, model.backbone.k), device=device)
-                .argsort(dim=0)
-                .split(batch_size, dim=0)
-            )
+        batches = torch.randperm(train_size, device=device).split(batch_size)
 
         model.train()
         total_loss = 0.0
@@ -269,16 +241,19 @@ for seed in SEEDS:
         for batch_idx in batches:
             optimizer.zero_grad()
             loss = loss_fn(apply_model('train', batch_idx), Y_train[batch_idx])
+            
             if grad_scaler is None:
                 loss.backward()
             else:
                 grad_scaler.scale(loss).backward()
+                
             if gradient_clipping_norm is not None:
                 if grad_scaler is not None:
                     grad_scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad.clip_grad_norm_(
                     model.parameters(), gradient_clipping_norm
                 )
+                
             if grad_scaler is None:
                 optimizer.step()
             else:
@@ -312,13 +287,13 @@ for seed in SEEDS:
         writer.add_scalar('train/r2', eval_train['r2'], epoch)
         writer.add_scalar('train/rmse', -eval_train['score'], epoch)
         writer.add_scalar('train/mde', eval_train['mde'], epoch)
-
+        
         try:
             lr = optimizer.param_groups[0]['lr']
             writer.add_scalar('train/lr', lr, epoch)
         except Exception:
             pass
-            
+
         writer.flush()
 
         if val_score_improved:
@@ -343,7 +318,7 @@ for seed in SEEDS:
 
     model.load_state_dict(best_checkpoint['model'])
     final_res = best_checkpoint['metrics']['test']
-    
+
     print('\n' + '-'*40)
     print(f'Seed {seed} RESULTS:')
     print(f'MSE : {final_res["mse"]:.6f}')
@@ -352,7 +327,6 @@ for seed in SEEDS:
     print(f'MDE : {final_res["mde"]:.6f}')
     print('-'*40)
 
-    # 存储最终的指标
     final_metrics_list.append({
         'seed': seed,
         'mse': final_res["mse"],
@@ -373,8 +347,8 @@ for seed in SEEDS:
             'model_params': {
                 'n_num_features': n_num_features,
                 'n_outputs': n_outputs,
-                'cat_cardinalities': cat_cardinalities,
-                'bins': bins,
+                'hidden_size': 256,
+                'num_layers': 2
             },
         },
         model_save_path,
@@ -395,4 +369,3 @@ print(f"MSE  : {np.mean(agg_mse):.6f} ± {np.std(agg_mse):.6f}")
 print(f"R²   : {np.mean(agg_r2):.4f} ± {np.std(agg_r2):.4f}")
 print(f"RMSE : {np.mean(agg_rmse):.6f} ± {np.std(agg_rmse):.6f}")
 print(f"MDE  : {np.mean(agg_mde):.6f} ± {np.std(agg_mde):.6f}")
-
